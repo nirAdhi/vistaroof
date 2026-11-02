@@ -1,0 +1,11 @@
+.venv
+data
+.env
+.env.production
+credentials.json
+__pycache__
+*.pyc
+tests
+docs
+*.md
+.git

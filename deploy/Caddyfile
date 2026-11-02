@@ -1,0 +1,17 @@
+# Caddy reverse proxy with automatic HTTPS. LEDGER_DOMAIN comes from docker-compose.
+{$LEDGER_DOMAIN} {
+    encode gzip
+    # Uploads of scans/photos can be large; keep in step with "Skip files larger than" in Admin.
+    request_body {
+        max_size 120MB
+    }
+    reverse_proxy app:8000 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-For {remote_host}
+    }
+    header {
+        # The app sets CSP/nosniff itself; Caddy only adds HSTS preload-friendly settings.
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        -Server
+    }
+}

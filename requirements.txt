@@ -1,0 +1,22 @@
+# Pinned to the versions audited with pip-audit (no known vulnerabilities) on 2026-10-25.
+# Upgrade deliberately: bump, run `pip-audit` and `pytest`, then commit.
+fastapi==0.161.1
+uvicorn[standard]==0.54.0
+anthropic==2.2.0
+pydantic==2.14.1
+python-dotenv==1.2.4
+google-api-python-client==2.201.0
+google-auth-httplib2==0.4.4
+google-auth-oauthlib==1.5.0
+python-docx==1.2.0
+openpyxl==3.1.5
+pillow==13.0.0
+pillow-heif==1.8.1
+python-multipart==0.0.32
+cryptography==50.0.2
+httpx==0.28.1            # Microsoft Graph client (app/microsoft.py)
+
+# test / audit tooling (not needed at runtime)
+pytest==9.1.1
+pip-audit
+bandit

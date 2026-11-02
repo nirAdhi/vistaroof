@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roofing Ledger</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Cpath d='M6 18 16 8l10 10M9 17v8h14v-8' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18 16 8l10 10M9 17v8h14v-8"/></svg>
+    </div>
+    <div>
+      <h1 id="companyName">Roofing Ledger</h1>
+      <div class="sub" id="sourceLine">Loading…</div>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button data-view="overview" class="active">Overview</button>
+    <button data-view="money-in">Money in</button>
+    <button data-view="money-out">Money out</button>
+    <button data-view="projects">Jobs</button>
+    <button data-view="companies">Companies</button>
+    <button data-view="documents">Documents</button>
+    <button data-view="ask">Ask</button>
+    <button data-view="sync">Sync &amp; setup</button>
+  </nav>
+  <div class="spacer"></div>
+  <button class="btn primary" id="uploadBtn" title="Upload invoices or receipts into Google Drive and the ledger">⬆ Upload</button>
+  <button class="btn" id="syncBtn" title="Scan every connected source for new or changed documents">Sync now</button>
+  <a class="btn" href="/admin" title="API keys, Google Drives, settings">Admin</a>
+  <button class="btn" id="logoutBtn" title="Log out">Log out</button>
+  <button class="icon-btn" id="themeBtn" title="Toggle light / dark">◐</button>
+</header>
+
+<!-- login box (shown when there is no valid session) -->
+<div class="auth-wrap" id="authWrap" style="display:none">
+  <div class="card auth-card">
+    <h2>Sign in</h2>
+    <p class="muted">Enter the dashboard password (or the admin password).</p>
+    <form id="authForm">
+      <input type="password" id="authPassword" placeholder="Password" autocomplete="current-password" required>
+      <button class="btn primary" type="submit">Sign in</button>
+      <div class="neg small" id="authError"></div>
+    </form>
+  </div>
+</div>
+
+<!-- upload window -->
+<div class="modal-backdrop" id="uploadBackdrop"></div>
+<div class="modal upload" id="uploadModal" role="dialog" aria-label="Upload documents">
+  <div class="modal-head">
+    <div><h2>Upload documents</h2><div class="muted small">Invoices, receipts, quotes, photos. They are saved to the chosen Google Drive or folder and read straight away.</div></div>
+    <button class="icon-btn" id="uploadClose" aria-label="Close">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="form">
+      <label>Save to <select id="uploadTarget"></select></label>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="uploadFiles" multiple accept=".pdf,.jpg,.jpeg,.png,.heic,.heif,.webp,.gif,.tif,.tiff,.bmp,.docx,.xlsx,.csv,.txt,application/pdf,image/*">
+        <div><b>Drop files here</b> or click to choose. Up to 20 files at a time.</div>
+        <div class="muted small" id="uploadList"></div>
+      </div>
+      <div class="actions"><button class="btn primary" id="uploadGo" disabled>Upload &amp; read</button><span class="muted small" id="uploadStatus"></span></div>
+    </div>
+    <div id="uploadResults"></div>
+  </div>
+</div>
+
+<div class="filterbar">
+  <span class="muted small">Period</span>
+  <div class="presets" id="presets">
+    <button data-range="ytd">This year</button>
+    <button data-range="last12" class="active">Last 12 months</button>
+    <button data-range="lastyear">Last year</button>
+    <button data-range="q">This quarter</button>
+    <button data-range="all">All time</button>
+  </div>
+  <input type="date" id="fromDate" aria-label="From date">
+  <span class="muted">to</span>
+  <input type="date" id="toDate" aria-label="To date">
+  <span class="muted small" id="periodNote"></span>
+</div>
+
+<main>
+  <!-- ===================== OVERVIEW ===================== -->
+  <section class="view active" id="view-overview">
+    <div class="grid tiles" id="tiles"></div>
+    <div class="grid two">
+      <div class="card span2">
+        <div class="card-head"><div><h2>Revenue vs costs by month</h2><div class="sub">Net of VAT, by document date</div></div><div class="view-toggle" data-chart="monthly"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div id="chart-monthly"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><h2>Cumulative profit</h2><div class="sub">Running total over the period</div></div><div class="view-toggle" data-chart="cumulative"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div id="chart-cumulative"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><h2>Where the money goes</h2><div class="sub">Costs by category, net of VAT</div></div><div class="view-toggle" data-chart="expcat"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div id="chart-expcat"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><h2>Needs attention</h2><div class="sub">Overdue, flagged and low-confidence items</div></div></div>
+        <div id="attention"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><h2>Document mix</h2><div class="sub">What is in the Drive for this period</div></div></div>
+        <div id="docmix"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== MONEY IN ===================== -->
+  <section class="view" id="view-money-in">
+    <div class="grid tiles" id="tiles-in"></div>
+    <div class="grid two">
+      <div class="card">
+        <div class="card-head"><div><h2>Revenue by customer</h2><div class="sub">Sales invoices less credit notes</div></div><div class="view-toggle" data-chart="customers"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div id="chart-customers"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><h2>Revenue by type of work</h2><div class="sub">Net of VAT</div></div><div class="view-toggle" data-chart="revcat"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div id="chart-revcat"></div>
+      </div>
+      <div class="card span2">
+        <div class="card-head"><div><h2>Unpaid sales invoices</h2><div class="sub">Money owed to the company</div></div></div>
+        <div id="receivables"></div>
+      </div>
+      <div class="card span2">
+        <div class="card-head"><div><h2>Quotes &amp; proformas (pipeline)</h2><div class="sub">Work priced but not yet invoiced</div></div></div>
+        <div id="pipeline"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== MONEY OUT ===================== -->
+  <section class="view" id="view-money-out">
+    <div class="grid tiles" id="tiles-out"></div>
+    <div class="grid two">
+      <div class="card">
+        <div class="card-head"><div><h2>Spend by supplier</h2><div class="sub">Bills, receipts and payslips, net of VAT</div></div><div class="view-toggle" data-chart="suppliers"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div id="chart-suppliers"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><h2>Spend by category</h2><div class="sub">Net of VAT</div></div><div class="view-toggle" data-chart="expcat2"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div id="chart-expcat2"></div>
+      </div>
+      <div class="card span2">
+        <div class="card-head"><div><h2>Unpaid supplier bills</h2><div class="sub">Money the company owes</div></div></div>
+        <div id="payables"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PROJECTS ===================== -->
+  <section class="view" id="view-projects">
+    <div class="card">
+      <div class="card-head"><div><h2>Jobs &amp; sites</h2><div class="sub">Revenue, costs and margin per job, from the project reference on each document</div></div></div>
+      <div id="projects"></div>
+    </div>
+  </section>
+
+  <!-- ===================== COMPANIES ===================== -->
+  <section class="view" id="view-companies">
+    <div class="card">
+      <div class="toolbar">
+        <input type="search" id="companySearch" placeholder="Search customers, suppliers, employees…">
+        <select id="companyRole"><option value="">Everyone</option><option value="customer">Customers</option><option value="supplier">Suppliers</option><option value="employee">Employees</option><option value="other">Other</option></select>
+        <span class="muted small" id="companyCount"></span>
+      </div>
+      <p class="muted small" style="margin:0 0 10px">All time. Click a company to see every document with a preview of the actual invoice or receipt.</p>
+      <div class="table-scroll" id="companyTable"></div>
+    </div>
+  </section>
+
+  <!-- ===================== DOCUMENTS ===================== -->
+  <section class="view" id="view-documents">
+    <div class="card">
+      <div class="toolbar">
+        <input type="search" id="docSearch" placeholder="Search name, customer, supplier, number, job…">
+        <select id="docType"><option value="">All types</option></select>
+        <select id="docTreatment"><option value="">All treatments</option></select>
+        <select id="docPay"><option value="">Any payment status</option></select>
+        <select id="docStatus"><option value="">Any processing status</option><option value="done">Processed</option><option value="pending">Pending</option><option value="processing">Processing</option><option value="skipped">Skipped</option><option value="error">Error</option></select>
+        <span class="muted small" id="docCount"></span>
+        <span class="spacer"></span>
+        <button class="btn sm" id="exportCsv">Export CSV</button>
+      </div>
+      <div class="table-scroll" id="docTable"></div>
+    </div>
+  </section>
+
+  <!-- ===================== ASK ===================== -->
+  <section class="view" id="view-ask">
+    <div class="card">
+      <div class="card-head"><div><h2>Ask about the books</h2><div class="sub">Answers come from the documents in the selected period</div></div></div>
+      <div class="ask-box">
+        <input type="text" id="askInput" placeholder="e.g. Which customers still owe us money and how much?">
+        <button class="btn primary" id="askBtn">Ask</button>
+      </div>
+      <div class="suggestions">
+        <button>What was our best month and why?</button>
+        <button>Which supplier do we spend the most with?</button>
+        <button>List overdue invoices with amounts</button>
+        <button>How much VAT do we owe for the last quarter?</button>
+        <button>Which jobs made the lowest margin?</button>
+      </div>
+      <div class="answer" id="answer"></div>
+    </div>
+  </section>
+
+  <!-- ===================== SYNC & SETUP ===================== -->
+  <section class="view" id="view-sync">
+    <div class="grid two">
+      <div class="card">
+        <div class="card-head"><div><h2>Sync status</h2><div class="sub">Each new or changed file is read once and classified by Claude</div></div></div>
+        <div id="syncPanel"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><h2>Connected sources</h2><div class="sub">Managed in the Admin area</div></div><a class="btn sm" href="/admin">Open Admin</a></div>
+        <div id="setupPanel"></div>
+      </div>
+      <div class="card span2">
+        <div class="card-head"><div><h2>How documents are counted</h2></div></div>
+        <div id="rulesPanel"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="modal-backdrop" id="companyBackdrop"></div>
+<div class="modal" id="companyModal" role="dialog" aria-label="Company"></div>
+<div class="modal-backdrop" id="viewerBackdrop"></div>
+<div class="modal viewer" id="viewerModal" role="dialog" aria-label="Document preview"></div>
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+<aside class="drawer" id="drawer" aria-label="Document details"></aside>
+<div class="tooltip" id="tooltip"></div>
+<div class="toast" id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

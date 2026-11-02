@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ledger Admin</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2352514e'/%3E%3Cpath d='M6 18 16 8l10 10M9 17v8h14v-8' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body class="admin">
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo admin-logo" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+    </div>
+    <div><h1>Ledger Admin</h1><div class="sub" id="adminSub">Settings, sources and syncing</div></div>
+  </div>
+  <div class="spacer"></div>
+  <a class="btn" href="/">← Owner dashboard</a>
+  <button class="btn" id="logoutBtn" style="display:none">Log out</button>
+  <button class="icon-btn" id="themeBtn" title="Toggle light / dark">◐</button>
+</header>
+
+<!-- login / first-run -->
+<div class="auth-wrap" id="authWrap" style="display:none">
+  <div class="card auth-card">
+    <h2 id="authTitle">Admin login</h2>
+    <p class="muted" id="authHint"></p>
+    <form id="authForm">
+      <input type="password" id="authPassword" placeholder="Password" autocomplete="current-password" required>
+      <input type="password" id="authPassword2" placeholder="Repeat password" autocomplete="new-password" style="display:none">
+      <button class="btn primary" type="submit" id="authSubmit">Log in</button>
+      <div class="neg small" id="authError"></div>
+    </form>
+  </div>
+</div>
+
+<div class="admin-layout" id="adminLayout" style="display:none">
+  <nav class="side" id="sideNav">
+    <button data-sec="sources" class="active">Sources &amp; sync</button>
+    <button data-sec="claude">Claude API</button>
+    <button data-sec="company">Company</button>
+    <button data-sec="google">Google setup</button>
+    <button data-sec="microsoft">Microsoft setup</button>
+    <button data-sec="log">Sync log</button>
+    <button data-sec="data">Data</button>
+    <button data-sec="security">Security</button>
+  </nav>
+
+  <main class="admin-main">
+    <div class="card status-strip" id="statusStrip"></div>
+
+    <!-- ===== SOURCES ===== -->
+    <section class="sec active" id="sec-sources">
+      <div class="sec-head"><h2>Sources</h2><div class="muted">Every SharePoint / OneDrive folder, Google Drive account or local folder that should be read. Each one signs in separately and can be synced on its own.</div></div>
+      <div id="sourceList" class="grid"></div>
+      <div class="grid two" style="margin-top:14px">
+        <div class="card">
+          <h3>Add a Microsoft 365 folder (SharePoint / OneDrive)</h3>
+          <p class="muted small">You will be sent to Microsoft to sign in with the account that can see the files. Syncing starts as soon as you come back.</p>
+          <form id="addMsForm" class="form">
+            <label>Name <input name="name" placeholder="e.g. HRAccounts – Invoices" required></label>
+            <label>Folder link <span class="muted">(optional)</span> <input name="ms_link" placeholder="Paste the SharePoint/OneDrive folder link (Share → Copy link). Blank = whole OneDrive, 'shared' = everything shared with the account"></label>
+            <label>Organisation (tenant) <span class="muted">(only when signing in as a guest of another organisation)</span> <input name="ms_tenant" placeholder="e.g. vistaroofing.ie — leave blank for your own organisation"></label>
+            <label class="check"><input type="checkbox" name="ms_upload" checked> Allow uploads from the dashboard into this folder (asks for the “create files” permission)</label>
+            <button class="btn primary" type="submit" id="addMsBtn">Add &amp; sign in with Microsoft</button>
+            <div class="muted small" id="addMsNote"></div>
+          </form>
+        </div>
+        <div class="card">
+          <h3>Add a Google Drive</h3>
+          <p class="muted small">You will be sent to Google to sign in with the account that owns the files. Syncing starts as soon as you come back.</p>
+          <form id="addDriveForm" class="form">
+            <label>Name <input name="name" placeholder="e.g. Cormac's Drive, Accounts shared drive" required></label>
+            <label>Only this folder <span class="muted">(optional)</span> <input name="drive_folder_id" placeholder="Paste the folder link or id, or leave blank for the whole Drive"></label>
+            <button class="btn primary" type="submit" id="addDriveBtn">Add &amp; sign in with Google</button>
+            <div class="muted small" id="addDriveNote"></div>
+          </form>
+        </div>
+        <div class="card">
+          <h3>Add a folder on this computer</h3>
+          <p class="muted small">Use this for a Google Drive for Desktop folder, a network share or any local folder. No Google setup needed.</p>
+          <form id="addLocalForm" class="form">
+            <label>Name <input name="name" placeholder="e.g. Office PC – Accounts" required></label>
+            <label>Folder path <input name="local_folder" placeholder="G:\My Drive\Accounts" required></label>
+            <button class="btn" type="submit">Add folder</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== CLAUDE ===== -->
+    <section class="sec" id="sec-claude">
+      <div class="sec-head"><h2>Claude API</h2><div class="muted">The key and model used to read documents and answer questions.</div></div>
+      <div class="card">
+        <form id="claudeForm" class="form">
+          <label>API key
+            <div class="inline">
+              <input name="anthropic_api_key" type="password" placeholder="sk-ant-…" autocomplete="off">
+              <button class="btn" type="button" id="showKeyBtn">Show</button>
+              <button class="btn" type="button" id="testKeyBtn">Test key</button>
+            </div>
+            <div class="small muted" id="keyStatus"></div>
+          </label>
+          <div class="grid two">
+            <label>Model for reading documents <select name="extract_model"></select></label>
+            <label>Reading effort <select name="extract_effort"><option value="low">Low (fastest, cheapest)</option><option value="medium">Medium (recommended)</option><option value="high">High (slow, most careful)</option></select></label>
+            <label>Model for "Ask" <select name="ask_model"><option value="">Same as reading model</option></select></label>
+            <label>Files read in parallel <input name="concurrency" type="number" min="1" max="10"></label>
+            <label>Skip files larger than (MB) <input name="max_file_mb" type="number" min="1" max="100" step="1"></label>
+            <label>Watch Microsoft 365 / Google Drive for changes every (seconds, 0 = off) <input name="watch_interval_seconds" type="number" min="0" max="86400"></label>
+            <label>Full re-scan of every source every (minutes, 0 = off) <input name="auto_sync_minutes" type="number" min="0" max="10080"></label>
+          </div>
+          <div class="actions"><button class="btn primary" type="submit">Save</button><span class="muted small" id="claudeSaved"></span></div>
+        </form>
+      </div>
+      <p class="muted small">Get a key at platform.claude.com → API keys. The key is stored in the local database on this computer and never shown in full again.</p>
+    </section>
+
+    <!-- ===== COMPANY ===== -->
+    <section class="sec" id="sec-company">
+      <div class="sec-head"><h2>Company</h2><div class="muted">Used to tell the company's own invoices (money in) from suppliers' invoices (money out).</div></div>
+      <div class="card">
+        <form id="companyForm" class="form">
+          <label>Company name as printed on invoices <input name="company_name" required></label>
+          <label>Registered address <span class="muted">(helps the reader recognise the company's own invoices)</span> <textarea name="company_address" rows="3" placeholder="Unit 77, Park West Enterprise Centre, …"></textarea></label>
+          <div class="grid two">
+            <label>VAT number <span class="muted">(optional)</span> <input name="company_vat" placeholder="IE1234567X"></label>
+          </div>
+          <div class="grid two">
+            <label>Base currency (ISO code) <input name="base_currency" maxlength="3" placeholder="EUR"></label>
+            <label>Country <input name="country" placeholder="Ireland"></label>
+          </div>
+          <div class="actions"><button class="btn primary" type="submit">Save</button><span class="muted small" id="companySaved"></span></div>
+        </form>
+      </div>
+      <p class="muted small">Changing the name only affects documents read from now on. Use “Full re-read” on a source to apply it to older documents.</p>
+    </section>
+
+    <!-- ===== GOOGLE ===== -->
+    <section class="sec" id="sec-google">
+      <div class="sec-head"><h2>Google setup</h2><div class="muted">One-off: the OAuth client that lets this app ask Google for read-only Drive access.</div></div>
+      <div class="card" id="googleStatus"></div>
+      <div class="card">
+        <h3>Upload the OAuth client JSON</h3>
+        <ol class="setup-steps">
+          <li>Go to <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a> and create a project (any name).</li>
+          <li><b>APIs &amp; Services → Library</b> → enable <b>Google Drive API</b>.</li>
+          <li><b>APIs &amp; Services → OAuth consent screen</b> → External → app name + your email → add every Google account you will connect as a <b>test user</b>.</li>
+          <li><b>Credentials → Create credentials → OAuth client ID → Desktop app</b> → Download JSON.</li>
+          <li>Upload that file here.</li>
+        </ol>
+        <form id="googleForm" class="form">
+          <label>Client JSON file <input type="file" id="googleFile" accept="application/json,.json"></label>
+          <label>…or paste the JSON <textarea name="json_text" rows="4" placeholder='{"installed":{"client_id":"…","client_secret":"…",…}}'></textarea></label>
+          <div class="actions"><button class="btn primary" type="submit">Save client</button><button class="btn" type="button" id="googleRemove">Remove</button></div>
+        </form>
+        <p class="muted small">If you choose a <b>Web application</b> client instead, add <code id="redirectUri"></code> as an authorised redirect URI.</p>
+      </div>
+    </section>
+
+    <!-- ===== MICROSOFT ===== -->
+    <section class="sec" id="sec-microsoft">
+      <div class="sec-head"><h2>Microsoft setup</h2><div class="muted">One-off: the app registration that lets this app ask Microsoft 365 for access to SharePoint and OneDrive files.</div></div>
+      <div class="card" id="msStatus"></div>
+      <div class="card">
+        <h3>Register the app in Microsoft Entra (about 5 minutes)</h3>
+        <ol class="setup-steps">
+          <li>Go to <a href="https://entra.microsoft.com/" target="_blank" rel="noopener">entra.microsoft.com</a> (or portal.azure.com → Microsoft Entra ID) → <b>App registrations → New registration</b>.</li>
+          <li>Name: <i>Roofing Ledger</i>. Supported account types: <b>Accounts in any organizational directory</b> (add “and personal Microsoft accounts” if a personal OneDrive will be used).</li>
+          <li>Redirect URI: platform <b>Web</b>, value <code id="msRedirectUri"></code>. Register.</li>
+          <li>Copy the <b>Application (client) ID</b> from the Overview page into the form below.</li>
+          <li><b>Certificates &amp; secrets → New client secret</b> → copy the <b>Value</b> (not the id) into the form. It is shown only once.</li>
+          <li><b>API permissions → Add a permission → Microsoft Graph → Delegated</b>: <code>Files.Read.All</code>, <code>Files.ReadWrite.All</code>, <code>Sites.Read.All</code>, <code>User.Read</code>, <code>offline_access</code>. If the organisation requires it, press <b>Grant admin consent</b>.</li>
+        </ol>
+        <form id="msForm" class="form">
+          <label>Application (client) ID <input name="client_id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required></label>
+          <label>Client secret value <input name="client_secret" type="password" autocomplete="off" placeholder="Paste the secret value (leave blank to keep the saved one, '-' to clear)"></label>
+          <label>Tenant <span class="muted">(default <code>common</code>; a domain or tenant id restricts sign-in to one organisation)</span> <input name="tenant" placeholder="common"></label>
+          <div class="actions"><button class="btn primary" type="submit">Save registration</button><button class="btn" type="button" id="msRemove">Remove</button></div>
+        </form>
+        <p class="muted small"><b>Guest access.</b> If the files belong to another organisation and were shared with your account (“Specific people → Can view”), add the source with that organisation’s domain in the <i>Organisation (tenant)</i> field, then sign in with your own account. For uploads the share must be “Can edit”.</p>
+      </div>
+    </section>
+
+    <!-- ===== LOG ===== -->
+    <section class="sec" id="sec-log">
+      <div class="sec-head"><h2>Sync log</h2><div class="muted">Every run, and the files that failed.</div></div>
+      <div class="card" id="runsTable"></div>
+      <div class="card" id="errorsTable" style="margin-top:14px"></div>
+    </section>
+
+    <!-- ===== DATA ===== -->
+    <section class="sec" id="sec-data">
+      <div class="sec-head"><h2>Data</h2><div class="muted">Everything is stored locally in <code>data/ledger.db</code>.</div></div>
+      <div class="grid two">
+        <div class="card">
+          <h3>Demo data</h3>
+          <p class="muted small">A sample year of a roofing company so the owner dashboard can be explored before anything is connected.</p>
+          <div class="actions"><button class="btn" id="demoLoad">Load demo data</button><button class="btn" id="demoClear">Remove demo data</button></div>
+        </div>
+        <div class="card">
+          <h3>Backup</h3>
+          <p class="muted small">Download a copy of the database (settings, sources, every extracted document). Keep it somewhere safe; restore by replacing <code>data/ledger.db</code> while the app is stopped.</p>
+          <div class="actions"><a class="btn" href="/api/admin/backup">Download backup</a></div>
+        </div>
+        <div class="card danger">
+          <h3>Danger zone</h3>
+          <p class="muted small">Deletes every extracted document and the sync history. Sources and settings are kept; the next sync re-reads everything (and costs API usage).</p>
+          <div class="actions"><button class="btn" id="clearDocs">Delete all documents</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== SECURITY ===== -->
+    <section class="sec" id="sec-security">
+      <div class="sec-head"><h2>Security</h2><div class="muted">Two passwords: the <b>admin</b> password opens everything; the optional <b>dashboard</b> password lets the owner see the figures without reaching these settings.</div></div>
+      <div class="card" id="securityStatus"></div>
+      <div class="grid two" style="margin-top:14px">
+        <div class="card">
+          <h3>Admin password</h3>
+          <form id="passwordForm" class="form">
+            <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+            <label>New password (10+ characters) <input name="new" type="password" autocomplete="new-password" minlength="10" required></label>
+            <div class="actions"><button class="btn primary" type="submit">Change password</button></div>
+          </form>
+          <p class="muted small">Changing it signs every other browser out.</p>
+        </div>
+        <div class="card">
+          <h3>Dashboard password (owner)</h3>
+          <form id="ownerPasswordForm" class="form">
+            <label>New dashboard password (10+ characters) <input name="password" type="password" autocomplete="new-password" minlength="10"></label>
+            <div class="actions"><button class="btn primary" type="submit">Set password</button><button class="btn" type="button" id="ownerPasswordClear">Remove</button></div>
+          </form>
+          <p class="muted small" id="ownerPasswordNote"></p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="/static/admin.js"></script>
+</body>
+</html>

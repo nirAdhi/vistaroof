@@ -1,0 +1,41 @@
+# Production stack: the app + Caddy (automatic HTTPS via Let's Encrypt).
+#
+#   1. cp .env.production.example .env.production  and fill in every value
+#   2. docker compose up -d
+#   3. open https://<your domain>/admin and create the admin password
+#
+# Caddy terminates TLS on 443, forwards to the app on the internal network, and sets the
+# X-Forwarded-* headers uvicorn trusts (see Dockerfile CMD).
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env.production
+    volumes:
+      - ledger-data:/data
+    expose:
+      - "8000"
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    # LEDGER_DOMAIN is read from the same .env.production as the app (Caddyfile uses {$LEDGER_DOMAIN}).
+    env_file: .env.production
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [app]
+    networks: [internal]
+
+volumes:
+  ledger-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:
