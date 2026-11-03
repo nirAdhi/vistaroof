@@ -169,8 +169,8 @@
         <h3>Register the app in Microsoft Entra (about 5 minutes)</h3>
         <ol class="setup-steps">
           <li>Go to <a href="https://entra.microsoft.com/" target="_blank" rel="noopener">entra.microsoft.com</a> (or portal.azure.com → Microsoft Entra ID) → <b>App registrations → New registration</b>.</li>
-          <li>Name: <i>Roofing Ledger</i>. Supported account types: <b>Accounts in any organizational directory</b> (add “and personal Microsoft accounts” if a personal OneDrive will be used).</li>
-          <li>Redirect URI: platform <b>Web</b>, value <code id="msRedirectUri"></code>. Register.</li>
+          <li>Name: <i>Roofing Ledger</i>. Supported account types: <b>Single tenant</b> when the registration is created in the organisation that owns the files (then put that organisation's domain in the Tenant field below); <b>Accounts in any organizational directory</b> only if several organisations will sign in.</li>
+          <li>Redirect URI: platform <b>Web</b>, value <code id="msRedirectUri"></code>. Register. Under <b>Authentication</b> you can add a second URI later (for example the local <code>http://127.0.0.1:8000/admin/oauth/ms-callback</code> for testing).</li>
           <li>Copy the <b>Application (client) ID</b> from the Overview page into the form below.</li>
           <li><b>Certificates &amp; secrets → New client secret</b> → copy the <b>Value</b> (not the id) into the form. It is shown only once.</li>
           <li><b>API permissions → Add a permission → Microsoft Graph → Delegated</b>: <code>Files.Read.All</code>, <code>Files.ReadWrite.All</code>, <code>Sites.Read.All</code>, <code>User.Read</code>, <code>offline_access</code>. If the organisation requires it, press <b>Grant admin consent</b>.</li>
