@@ -89,6 +89,26 @@ def test_delete_user(admin, fresh_db):
     assert admin.get("/api/admin/users").json()["users"] == []
 
 
+def test_reset_admin_command(admin, fresh_db, capsys):
+    from app import reset_admin, settings
+
+    u = make_user(admin)
+    user = login_as(u["email"])
+    reset_admin.main()
+    assert "admin password cleared" in capsys.readouterr().out
+    assert admin.get("/api/admin/me").json() == {"authenticated": False, "role": None, "user": None, "needs_setup": True}
+    assert user.get("/api/summary").status_code == 401  # everyone is logged out
+    assert client_setup_works(admin)
+
+
+def client_setup_works(c) -> bool:
+    """After a reset the admin page can create a new password and user accounts still exist."""
+    from app import db
+
+    ok = c.post("/api/admin/setup", json={"password": ADMIN_PW}).status_code == 200
+    return ok and db.count_users() == 1
+
+
 def test_login_box_accepts_password_only_for_admin(client, fresh_db):
     client.cookies.clear()
     assert client.post("/api/auth/login", json={"password": ADMIN_PW}).json()["role"] == "admin"

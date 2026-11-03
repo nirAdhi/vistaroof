@@ -34,6 +34,10 @@ Open `https://<your domain>/admin`, create the admin password, then follow *Admi
 and *Admin → Sources*. Create an account for the owner and each colleague under *Admin → Users &
 security*; they sign in at `https://<your domain>/` with their email and password.
 
+Forgot the admin password? `docker compose exec app python -m app.reset_admin` clears it (and logs
+everyone out); the next visit to `/admin` asks for a new one. User account passwords are reset from
+*Admin → Users & security*.
+
 What the stack does:
 
 - `app` runs uvicorn with `--proxy-headers` so it knows requests arrived over HTTPS (Secure cookies,
