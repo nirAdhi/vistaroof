@@ -17,6 +17,10 @@ APP_DEBUG         ``1`` shows exception details in API error responses. Keep off
 LOCAL_ROOTS       Optional ``;``-separated list of directories that local-folder sources may point
                   at. When set, an admin cannot register a folder outside these roots.
 LOG_DIR           Folder for rotating log files (default ``<DATA_DIR>/logs``).
+ADMIN_PASSWORD    Built-in admin password, applied at every start (10+ characters). When set, the
+                  first-run "create the admin password" screen is skipped and the password cannot be
+                  changed from the UI: edit the file and restart instead.
+ADMIN_EMAIL       Optional sign-in name for that admin (otherwise the email field is left empty).
 COMPANY_NAME etc. Initial defaults for settings, used only until changed in Admin.
 """
 from __future__ import annotations
@@ -42,6 +46,10 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "auto").strip().lower()
 DEBUG = os.getenv("APP_DEBUG", "").strip().lower() in ("1", "true", "yes")
 LOCAL_ROOTS = [Path(p.strip()).resolve() for p in os.getenv("LOCAL_ROOTS", "").split(";") if p.strip()]
 IS_PRODUCTION = bool(PUBLIC_BASE_URL)  # a public URL means the app is exposed beyond localhost
+
+# Built-in admin login from the environment (see settings.apply_env_admin()).
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip().lower()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
 # Initial values for the settings table (used only until the admin changes them in the UI).
 ENV_DEFAULTS = {

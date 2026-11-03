@@ -17,6 +17,9 @@ from . import config, db, settings
 
 def main() -> None:
     db.init_db()
+    if settings.admin_from_env():
+        print("ADMIN_PASSWORD is set in the environment: change it there and restart the app instead.")
+        return
     had_password = bool(settings.get("admin_password_hash"))
     settings.set_value("admin_password_hash", "")
     settings.rotate_session_secret()

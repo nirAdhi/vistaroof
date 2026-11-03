@@ -19,8 +19,10 @@ HMAC is keyed with ``session_secret`` (random, generated once, stored in setting
 
 Who can sign in
 ---------------
-* The built-in **admin password** (``admin_password_hash``): created on first run, ``uid`` 0. It is
-  the break-glass login and the only one that exists before any account is created.
+* The built-in **admin password** (``admin_password_hash``): created on first run, or taken from
+  ``ADMIN_PASSWORD`` in the environment at every start (``apply_env_admin()``), ``uid`` 0. It is
+  the break-glass login and the only one that exists before any account is created. With
+  ``ADMIN_EMAIL`` set, that email + password also signs the built-in admin in.
 * **User accounts** (``users`` table, see db.py): name, email, password, role ``user`` (dashboard
   only) or ``admin`` (dashboard + admin area). Their tokens carry the user id and the user's
   ``token_version``; ``resolve_session()`` checks both against the table on every request so a
@@ -180,6 +182,8 @@ def public() -> dict[str, Any]:
         out["ms_tenant"] = ms.get("tenant") or "common"
         out["ms_has_secret"] = bool(ms.get("client_secret"))
     out["has_admin_password"] = bool(get("admin_password_hash"))
+    out["admin_from_env"] = admin_from_env()
+    out["admin_email"] = config.ADMIN_EMAIL
     out["user_count"] = db.count_users()
     out["secrets_encrypted"] = crypto.is_enabled()
     out["public_base_url"] = config.PUBLIC_BASE_URL
@@ -222,6 +226,26 @@ def rotate_session_secret() -> None:
     set_value("session_secret", secrets.token_hex(32))
 
 
+def admin_from_env() -> bool:
+    """True when ADMIN_PASSWORD is set in the environment (the UI then cannot change it)."""
+    return bool(config.ADMIN_PASSWORD)
+
+
+def apply_env_admin() -> str | None:
+    """Called at startup: make the stored admin password match ``ADMIN_PASSWORD`` from the
+    environment. Returns a warning text when the variable is set but unusable (too short), in which
+    case the stored password is left alone."""
+    pw = config.ADMIN_PASSWORD
+    if not pw:
+        return None
+    if len(pw) < MIN_PASSWORD_LENGTH:
+        return f"ADMIN_PASSWORD is shorter than {MIN_PASSWORD_LENGTH} characters and was ignored"
+    if not check_password(pw, "admin"):  # only re-hash when it actually changed
+        set_password(pw, "admin")
+        rotate_session_secret()  # a changed admin password logs every browser out, like the UI does
+    return None
+
+
 # ---------------------------------------------------------------- identities
 
 
@@ -234,6 +258,10 @@ class Identity:
     ver: int = 0              # users.token_version at login time
     name: str = "Admin"
     email: str | None = None
+
+    @staticmethod
+    def builtin_admin() -> "Identity":
+        return Identity(role="admin", email=config.ADMIN_EMAIL or None)
 
     @property
     def is_builtin_admin(self) -> bool:
@@ -252,12 +280,12 @@ def identity_for_user(user: dict[str, Any]) -> Identity:
 def authenticate(email: str, password: str) -> Identity | None:
     """The one login check behind both login boxes.
 
-    * empty email -> the built-in admin password;
+    * empty email (or the email given as ADMIN_EMAIL) -> the built-in admin password;
     * otherwise the user account with that email, which must be active.
     Returns None on any failure (callers answer a uniform 401)."""
     email = (email or "").strip().lower()
-    if not email:
-        return Identity(role="admin") if check_password(password, "admin") else None
+    if not email or (config.ADMIN_EMAIL and email == config.ADMIN_EMAIL):
+        return Identity.builtin_admin() if check_password(password, "admin") else None
     user = db.get_user_by_email(email)
     if user is None or not user.get("active"):
         # still burn the same time as a real check so email enumeration by timing is harder
@@ -317,7 +345,7 @@ def resolve_session(token: str | None) -> Identity | None:
         return None
     role, uid, ver = parsed
     if uid == 0:
-        return Identity(role="admin") if role == "admin" else None
+        return Identity.builtin_admin() if role == "admin" else None
     user = db.get_user(uid, with_hash=True)
     if user is None or not user.get("active") or int(user.get("token_version") or 1) != ver:
         return None

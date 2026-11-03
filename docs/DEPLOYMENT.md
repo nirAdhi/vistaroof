@@ -34,9 +34,17 @@ Open `https://<your domain>/admin`, create the admin password, then follow *Admi
 and *Admin → Sources*. Create an account for the owner and each colleague under *Admin → Users &
 security*; they sign in at `https://<your domain>/` with their email and password.
 
-Forgot the admin password? `docker compose exec app python -m app.reset_admin` clears it (and logs
-everyone out); the next visit to `/admin` asks for a new one. User account passwords are reset from
-*Admin → Users & security*.
+**Admin login.** The simplest option is to put it in `.env.production`:
+
+```
+ADMIN_EMAIL=you@example.com     # sign-in name (an empty email also works)
+ADMIN_PASSWORD=<10+ characters>
+```
+
+The app applies these at every start, so `/admin` never asks you to create a password, and resetting
+it is: edit the file, `docker compose up -d`. Without `ADMIN_PASSWORD` the first visit to `/admin`
+asks for a password; if it is forgotten, `docker compose exec app python -m app.reset_admin` clears
+it (and logs everyone out). User account passwords are reset from *Admin → Users & security*.
 
 What the stack does:
 

@@ -267,11 +267,14 @@
   function renderSecurity(s, users) {
     const active = users.filter((u) => u.active).length;
     $("#securityStatus").innerHTML = `<ul class="setup-steps" style="list-style:none;padding:0">
-      <li class="${s.has_admin_password ? "ok" : "missing"}">Admin password set</li>
+      <li class="${s.has_admin_password ? "ok" : "missing"}">Admin password set${s.admin_from_env ? ` — from <code>ADMIN_PASSWORD</code> in the server environment${s.admin_email ? `, sign-in name <code>${esc(s.admin_email)}</code>` : ""}` : ""}</li>
       <li class="${active ? "ok" : "missing"}">${active ? `${active} user account${active === 1 ? "" : "s"} can sign in` : "No user accounts yet — everyone would need the admin password"}</li>
       <li class="${s.secrets_encrypted ? "ok" : "missing"}">Secrets encrypted at rest (<code>APP_SECRET_KEY</code>) ${s.secrets_encrypted ? "" : "— set it in the server environment"}</li>
       <li class="${s.public_base_url ? "ok" : "missing"}">Public URL pinned (<code>PUBLIC_BASE_URL</code>) ${s.public_base_url ? esc(s.public_base_url) : "— required when deployed on a server"}</li>
     </ul>`;
+    // the built-in password cannot be changed here while the environment defines it
+    $$("#passwordForm input, #passwordForm button").forEach((el) => { el.disabled = !!s.admin_from_env; });
+    $("#passwordEnvNote").style.display = s.admin_from_env ? "" : "none";
     renderUsers(users);
   }
   /** User accounts table with per-row actions (reset password, role, enable/disable, remove). */

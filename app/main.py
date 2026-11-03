@@ -62,6 +62,11 @@ MAX_UPLOAD_FILES = 20
 async def _lifespan(_app: FastAPI):
     logsetup.setup()
     db.init_db()
+    warning = settings.apply_env_admin()  # ADMIN_PASSWORD / ADMIN_EMAIL from .env, if given
+    if warning:
+        log.error("%s", warning)
+    elif settings.admin_from_env():
+        log.info("admin password taken from ADMIN_PASSWORD (sign-in name: %s)", config.ADMIN_EMAIL or "<empty email>")
     if config.IS_PRODUCTION:
         if not settings.public()["secrets_encrypted"]:
             log.warning("APP_SECRET_KEY is not set: secrets are stored unencrypted. Set it before going live.")
@@ -555,7 +560,7 @@ def admin_setup(body: Password, request: Request, response: Response) -> dict[st
     if len(body.password) < settings.MIN_PASSWORD_LENGTH:
         raise HTTPException(400, f"password must be at least {settings.MIN_PASSWORD_LENGTH} characters")
     settings.set_password(body.password, "admin")
-    _set_session(response, request, settings.Identity(role="admin"))
+    _set_session(response, request, settings.Identity.builtin_admin())
     return {"ok": True}
 
 
@@ -578,6 +583,8 @@ def admin_logout(response: Response) -> dict[str, Any]:
 @app.post("/api/admin/password", dependencies=[Depends(require_admin)])
 def admin_change_password(body: PasswordChange, request: Request, response: Response) -> dict[str, Any]:
     """Change the built-in admin password. Rotating the signing secret logs every browser out."""
+    if settings.admin_from_env():
+        raise HTTPException(400, "the admin password is set by ADMIN_PASSWORD in the server environment; change it there and restart")
     if not settings.check_password(body.current, "admin"):
         raise HTTPException(400, "current password is wrong")
     if len(body.new) < settings.MIN_PASSWORD_LENGTH:

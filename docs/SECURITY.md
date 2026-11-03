@@ -27,7 +27,10 @@ as third parties.
 - Every data endpoint requires a session; only the two HTML pages, `/static`, `/healthz`, the login
   endpoints and the OAuth callback are reachable anonymously (`tests/test_security.py::test_everything_requires_login`).
 - Named accounts (`users` table) with role `user` or `admin`; the built-in admin password is the
-  fallback (empty email). User sessions get 403 on every `/api/admin/*` route and on the OAuth
+  fallback (empty email, or `ADMIN_EMAIL`). It is created on first run or taken from
+  `ADMIN_PASSWORD` in the environment at every start; in that case the UI cannot change it, which
+  keeps the operator's `.env.production` the single source of truth. The variable is only ever
+  hashed into the database, never logged. User sessions get 403 on every `/api/admin/*` route and on the OAuth
   connect route; `/api/admin/login` refuses accounts without the admin role.
 - Session cookie: `HttpOnly`, `SameSite=Lax`, `Secure` when served over HTTPS (or `PUBLIC_BASE_URL`
   is https), 14-day expiry embedded in the HMAC-signed token

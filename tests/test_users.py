@@ -109,6 +109,36 @@ def client_setup_works(c) -> bool:
     return ok and db.count_users() == 1
 
 
+def test_admin_login_from_environment(client, fresh_db, monkeypatch, capsys):
+    """ADMIN_EMAIL / ADMIN_PASSWORD in the environment define the built-in admin at startup."""
+    from app import config, reset_admin, settings
+
+    monkeypatch.setattr(config, "ADMIN_EMAIL", "boss@vistaroofing.ie")
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "short")
+    assert "ignored" in settings.apply_env_admin()  # too short: stored password untouched
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "env-admin-pass-123")
+    assert settings.apply_env_admin() is None
+    try:
+        client.cookies.clear()
+        assert client.post("/api/admin/login", json={"password": ADMIN_PW}).status_code == 401  # old one is gone
+        r = client.post("/api/admin/login", json={"email": "Boss@VistaRoofing.ie", "password": "env-admin-pass-123"})
+        assert r.status_code == 200 and r.json()["user"] == {"role": "admin", "uid": 0, "name": "Admin", "email": "boss@vistaroofing.ie"}
+        assert client.post("/api/auth/login", json={"email": "", "password": "env-admin-pass-123"}).status_code == 200  # empty email still works
+        # cannot be changed from the UI, and the reset command refuses too
+        assert client.post("/api/admin/password", json={"current": "env-admin-pass-123", "new": "another-pass-12"}).status_code == 400
+        assert client.get("/api/admin/overview").json()["settings"]["admin_from_env"] is True
+        reset_admin.main()
+        assert "change it there" in capsys.readouterr().out
+        assert settings.check_password("env-admin-pass-123", "admin")
+        # unchanged password on the next start: no re-hash, sessions survive
+        secret = settings.get("session_secret")
+        assert settings.apply_env_admin() is None and settings.get("session_secret") == secret
+        assert client.get("/api/admin/me").json()["authenticated"] is True
+    finally:
+        monkeypatch.setattr(config, "ADMIN_PASSWORD", "")
+        settings.set_password(ADMIN_PW, "admin")  # restore for the other tests
+
+
 def test_login_box_accepts_password_only_for_admin(client, fresh_db):
     client.cookies.clear()
     assert client.post("/api/auth/login", json={"password": ADMIN_PW}).json()["role"] == "admin"

@@ -28,7 +28,9 @@ Documentation:
 5. Admin → Users & security: create an account (name, email, password) for the owner and anyone
    else who should see the ledger. Admin → Data: remove demo data.
 
-Forgot the admin password? `.venv\Scripts\python -m app.reset_admin` (Docker:
+Admin login: either create the password in the browser on first visit, or put `ADMIN_EMAIL` and
+`ADMIN_PASSWORD` in `.env` (`.env.production` in Docker) and the app takes them at every start.
+Forgot a browser-created password? `.venv\Scripts\python -m app.reset_admin` (Docker:
 `docker compose exec app python -m app.reset_admin`) clears it; `/admin` then asks for a new one.
 
 The dashboard ships with demo data (including generated sample pages for previews) so it can be
