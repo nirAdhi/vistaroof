@@ -1,7 +1,7 @@
 /* Ledger Admin — settings, sources, syncing, security
  *
  * Sections: sources (cards + add forms + Google connect), Claude API, Company, Google setup, Sync log,
- * Data (demo/backup/clear), Security (admin + owner passwords). All calls go to /api/admin/* in
+ * Data (demo/backup/clear), Users & security (user accounts + the built-in admin password). All calls go to /api/admin/* in
  * app/main.py and require the admin role; a 401/403 brings the login box back.
  */
 (() => {
@@ -29,17 +29,19 @@
   function showAuth(needsSetup) {
     $("#adminLayout").style.display = "none"; $("#authWrap").style.display = "grid"; $("#logoutBtn").style.display = "none";
     $("#authTitle").textContent = needsSetup ? "Create the admin password" : "Admin login";
-    $("#authHint").textContent = needsSetup ? "This is the first time the admin area is opened. Choose an admin password (at least 10 characters)." : "Admin password required.";
+    $("#authHint").textContent = needsSetup ? "This is the first time the admin area is opened. Choose an admin password (at least 10 characters)." : "Sign in with an admin account, or leave the email empty and use the admin password.";
+    $("#authEmail").style.display = needsSetup ? "none" : "block";
     $("#authPassword2").style.display = needsSetup ? "block" : "none";
     $("#authSubmit").textContent = needsSetup ? "Create password" : "Log in";
     $("#authForm").dataset.mode = needsSetup ? "setup" : "login";
-    $("#authPassword").focus();
+    (needsSetup ? $("#authPassword") : $("#authEmail")).focus();
   }
   $("#authForm").addEventListener("submit", async (e) => {
     e.preventDefault(); $("#authError").textContent = "";
     const pw = $("#authPassword").value, mode = e.target.dataset.mode;
     if (mode === "setup" && pw !== $("#authPassword2").value) { $("#authError").textContent = "Passwords do not match"; return; }
-    try { await api(`/api/admin/${mode}`, { method: "POST", body: JSON.stringify({ password: pw }) }); $("#authPassword").value = ""; $("#authPassword2").value = ""; await boot(); }
+    const body = mode === "setup" ? { password: pw } : { email: $("#authEmail").value.trim(), password: pw };
+    try { await api(`/api/admin/${mode}`, { method: "POST", body: JSON.stringify(body) }); $("#authPassword").value = ""; $("#authPassword2").value = ""; await boot(); }
     catch (err) { $("#authError").textContent = err.message; }
   });
   $("#logoutBtn").addEventListener("click", async () => { await api("/api/admin/logout", { method: "POST" }); showAuth(false); });
@@ -57,7 +59,7 @@
     renderCompany(o.settings);
     renderGoogle(o.settings);
     renderMicrosoft(o.settings);
-    renderSecurity(o.settings);
+    renderSecurity(o.settings, o.users || []);
     renderLog(o.sync);
     $("#demoLoad").style.display = o.demo_loaded ? "none" : ""; $("#demoClear").style.display = o.demo_loaded ? "" : "none";
     $("#redirectUri").textContent = `${location.origin}/admin/oauth/callback`;
@@ -99,7 +101,7 @@
     $("#syncAllBtn").addEventListener("click", () => run(api("/api/admin/sync-all", { method: "POST" }), "Sync started"));
     $("#watchNowBtn").addEventListener("click", () => run(api("/api/admin/watch-now", { method: "POST" }).then((r) => toast(r.changed_sources.length ? `Changes found in ${r.changed_sources.length} source(s), sync started` : "No changes since the last check")), null));
     $$("#statusStrip [data-go]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); showSection(a.dataset.go); }));
-    $("#adminSub").textContent = st.running ? `Syncing ${pct}%` : "Settings, sources and syncing";
+    $("#adminSub").textContent = st.running ? `Syncing ${pct}%` : whoAmI();
   }
 
   function statusBadge(src) {
@@ -262,23 +264,67 @@
   $("#demoLoad").addEventListener("click", () => run(api("/api/admin/demo/load", { method: "POST" }), "Demo data loaded"));
   $("#demoClear").addEventListener("click", () => run(api("/api/admin/demo/clear", { method: "POST" }), "Demo data removed"));
   $("#clearDocs").addEventListener("click", () => { if (confirm("Delete ALL extracted documents and sync history? This cannot be undone.")) run(api("/api/admin/clear-documents", { method: "POST" }), "All documents deleted"); });
-  function renderSecurity(s) {
+  function renderSecurity(s, users) {
+    const active = users.filter((u) => u.active).length;
     $("#securityStatus").innerHTML = `<ul class="setup-steps" style="list-style:none;padding:0">
       <li class="${s.has_admin_password ? "ok" : "missing"}">Admin password set</li>
-      <li class="${s.has_owner_password ? "ok" : "missing"}">Dashboard password for the owner ${s.has_owner_password ? "set" : "not set — the dashboard currently needs the admin password"}</li>
+      <li class="${active ? "ok" : "missing"}">${active ? `${active} user account${active === 1 ? "" : "s"} can sign in` : "No user accounts yet — everyone would need the admin password"}</li>
       <li class="${s.secrets_encrypted ? "ok" : "missing"}">Secrets encrypted at rest (<code>APP_SECRET_KEY</code>) ${s.secrets_encrypted ? "" : "— set it in the server environment"}</li>
       <li class="${s.public_base_url ? "ok" : "missing"}">Public URL pinned (<code>PUBLIC_BASE_URL</code>) ${s.public_base_url ? esc(s.public_base_url) : "— required when deployed on a server"}</li>
     </ul>`;
-    $("#ownerPasswordNote").textContent = s.has_owner_password ? "A dashboard password is set. The owner signs in with it at the dashboard; it cannot open Admin." : "No dashboard password yet.";
+    renderUsers(users);
   }
-  $("#ownerPasswordForm").addEventListener("submit", async (e) => {
+  /** User accounts table with per-row actions (reset password, role, enable/disable, remove). */
+  function renderUsers(users) {
+    const me = state.me || {};
+    if (!users.length) { $("#usersTable").innerHTML = `<div class="empty">No accounts yet. Add the owner and anyone else who should see the ledger.</div>`; return; }
+    $("#usersTable").innerHTML = `<table class="users-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead><tbody>${users.map((u) => `
+      <tr data-id="${u.id}" class="${u.active ? "" : "muted"}">
+        <td>${esc(u.name || "—")}${me.uid === u.id ? ' <span class="chip">you</span>' : ""}</td>
+        <td>${esc(u.email)}</td>
+        <td><span class="badge ${u.role === "admin" ? "accent" : "muted"}">${u.role === "admin" ? "Admin" : "User"}</span></td>
+        <td>${u.active ? "Active" : "Disabled"}</td>
+        <td>${when(u.last_login_at)}</td>
+        <td><div class="actions">
+          <button class="btn sm" data-act="rename">Rename</button>
+          <button class="btn sm" data-act="reset">Reset password</button>
+          <button class="btn sm" data-act="role">${u.role === "admin" ? "Make user" : "Make admin"}</button>
+          <button class="btn sm" data-act="toggle">${u.active ? "Disable" : "Enable"}</button>
+          <button class="btn sm" data-act="delete">Remove</button>
+        </div></td>
+      </tr>`).join("")}</tbody></table>`;
+    $$("#usersTable button[data-act]").forEach((b) => b.addEventListener("click", () => userAction(b.dataset.act, users.find((u) => u.id === +b.closest("tr").dataset.id))));
+  }
+  async function userAction(act, u) {
+    const url = `/api/admin/users/${u.id}`;
+    if (act === "rename") {
+      const name = prompt(`Name for ${u.email}:`, u.name || ""); if (name === null) return;
+      return run(api(url, { method: "PATCH", body: JSON.stringify({ name }) }), "Renamed");
+    }
+    if (act === "reset") {
+      const pw = prompt(`New password for ${u.email} (10+ characters). They will be signed out everywhere.`); if (!pw) return;
+      return run(api(`${url}/password`, { method: "POST", body: JSON.stringify({ password: pw }) }), "Password reset");
+    }
+    if (act === "role") {
+      const role = u.role === "admin" ? "user" : "admin";
+      if (!confirm(role === "admin" ? `Give ${u.email} access to this admin area?` : `Limit ${u.email} to the dashboard?`)) return;
+      return run(api(url, { method: "PATCH", body: JSON.stringify({ role }) }), "Role changed");
+    }
+    if (act === "toggle") {
+      if (u.active && !confirm(`Disable ${u.email}? They are signed out immediately and cannot sign in until re-enabled.`)) return;
+      return run(api(url, { method: "PATCH", body: JSON.stringify({ active: !u.active }) }), u.active ? "Account disabled" : "Account enabled");
+    }
+    if (act === "delete") {
+      if (!confirm(`Remove the account ${u.email}? This cannot be undone.`)) return;
+      return run(api(url, { method: "DELETE" }), "Account removed");
+    }
+  }
+  $("#addUserForm").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const pw = e.target.password.value;
-    if (!pw) { toast("Enter a password"); return; }
-    await run(api("/api/admin/owner-password", { method: "POST", body: JSON.stringify({ password: pw }) }), "Dashboard password set");
-    e.target.reset();
+    const body = Object.fromEntries(new FormData(e.target).entries());
+    try { await api("/api/admin/users", { method: "POST", body: JSON.stringify(body) }); toast(`Account created for ${body.email}`); e.target.reset(); await load(); }
+    catch (err) { toast(err.message, 7000); }
   });
-  $("#ownerPasswordClear").addEventListener("click", () => { if (confirm("Remove the dashboard password? The owner will then need the admin password.")) run(api("/api/admin/owner-password", { method: "POST", body: JSON.stringify({ password: "" }) }), "Dashboard password removed"); });
   $("#passwordForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(e.target).entries());
@@ -313,9 +359,16 @@
   $("#themeBtn").addEventListener("click", () => { const cur = document.documentElement.getAttribute("data-theme"); const isDark = cur ? cur === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches; applyTheme(isDark ? "light" : "dark"); });
   try { const t = localStorage.getItem("theme"); if (t) applyTheme(t); } catch (_) { /* ignore */ }
 
+  /** Header subtitle: which admin is signed in (an account, or the built-in admin password). */
+  function whoAmI() {
+    const me = state.me || {};
+    return me.uid ? `Signed in as ${me.name || me.email}` : "Signed in with the admin password";
+  }
   async function boot() {
     const me = await api("/api/admin/me");
     if (!me.authenticated) { showAuth(me.needs_setup); return; }
+    state.me = me.user || {};
+    $("#adminSub").textContent = whoAmI();
     $("#authWrap").style.display = "none"; $("#adminLayout").style.display = ""; $("#logoutBtn").style.display = "";
     await load();
     const sec = location.hash.slice(1); if (sec && $(`#sec-${sec}`)) showSection(sec);

@@ -3,10 +3,11 @@
 Route groups
 ------------
 Pages          ``/`` (owner dashboard), ``/admin`` (admin area) — static HTML, data loaded by JS.
-Auth           ``/api/auth/*`` shared login box (admin or owner password), ``/api/admin/setup|login|logout``.
+Auth           ``/api/auth/*`` dashboard login (email + password of a user account, or the built-in
+               admin password with an empty email), own password change; ``/api/admin/setup|login|logout``.
 Owner API      ``/api/config``, ``/api/summary``, ``/api/documents*``, ``/api/companies``, ``/api/ask``,
                ``/api/sync*``, ``/api/upload*``, ``/api/version`` — any logged-in role.
-Admin API      ``/api/admin/*`` — admin role only.
+Admin API      ``/api/admin/*`` — admin role only; ``/api/admin/users*`` manages the user accounts.
 Google OAuth   ``/admin/sources/{id}/connect`` → Google → ``/admin/oauth/callback``.
 Microsoft      same Connect route → Microsoft sign-in → ``/admin/oauth/ms-callback`` (microsoft.py).
 Ops            ``/healthz``.
@@ -14,7 +15,8 @@ Ops            ``/healthz``.
 Security model (see docs/SECURITY.md)
 -------------------------------------
 * Every data endpoint requires a session cookie (``rl_session``: HttpOnly, SameSite=Lax, Secure on
-  HTTPS). Tokens are HMAC-signed with a role and an expiry (settings.py).
+  HTTPS). Tokens are HMAC-signed with role, user id, token version and expiry (settings.py); user
+  sessions are re-checked against the ``users`` table on every request.
 * State-changing requests must carry an Origin/Referer matching the request host (CSRF defence in
   depth on top of SameSite).
 * Login endpoints are rate limited per client IP (10 attempts / 15 min).
@@ -24,13 +26,14 @@ Security model (see docs/SECURITY.md)
 Debugging tips
 --------------
 * 401 = not logged in (or cookie not sent: on an https PUBLIC_BASE_URL the cookie is Secure and
-  will not be sent over plain http). 403 = logged in as owner on an admin endpoint, or Origin mismatch.
+  will not be sent over plain http). 403 = logged in as a plain user on an admin endpoint, or Origin mismatch.
 * ``/healthz`` reports database + scheduler state without authentication.
 """
 from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets
 import tempfile
 import time
@@ -146,15 +149,25 @@ def _cookie_secure(request: Request) -> bool:
     return _request_is_https(request) or config.PUBLIC_BASE_URL.startswith("https://")
 
 
-def _set_session(response: Response, request: Request, role: str) -> None:
+def _set_session(response: Response, request: Request, ident: settings.Identity) -> None:
     response.set_cookie(
-        SESSION_COOKIE, settings.make_session_token(role), httponly=True, samesite="lax",
+        SESSION_COOKIE, settings.make_session_token(ident), httponly=True, samesite="lax",
         secure=_cookie_secure(request), max_age=settings.SESSION_TTL_SECONDS, path="/",
     )
 
 
+def current_identity(request: Request) -> settings.Identity | None:
+    """Who is signed in (None when the cookie is missing, expired, forged or the account was disabled)."""
+    cached = getattr(request.state, "identity", None)
+    if cached is None:
+        cached = settings.resolve_session(request.cookies.get(SESSION_COOKIE))
+        request.state.identity = cached
+    return cached
+
+
 def current_role(request: Request) -> str | None:
-    return settings.session_role(request.cookies.get(SESSION_COOKIE))
+    ident = current_identity(request)
+    return ident.role if ident else None
 
 
 def require_login(request: Request) -> str:
@@ -208,35 +221,73 @@ def healthz() -> dict[str, Any]:
     return {"ok": db_ok, "version": app.version, "sync_running": sync.status()["running"]}
 
 
-# ====================================================================== shared login (owner dashboard)
+# ====================================================================== dashboard login (everyone)
 
 
 class Password(BaseModel):
     password: str = Field(min_length=1, max_length=200)
 
 
+class Login(BaseModel):
+    """Email + password of a user account; an empty email means the built-in admin password."""
+
+    email: str = Field("", max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+
+
+def _login(body: Login, request: Request) -> settings.Identity:
+    """Shared by both login boxes: rate limit, slow down, check, uniform 401."""
+    if _rate_limited(request):
+        raise HTTPException(429, "too many attempts, try again in 15 minutes")
+    time.sleep(0.3)  # blunt brute-force damper on top of the rate limit
+    ident = settings.authenticate(body.email, body.password)
+    if ident is None:
+        raise HTTPException(401, "wrong email or password")
+    return ident
+
+
 @app.get("/api/auth/me")
 def auth_me(request: Request) -> dict[str, Any]:
-    return {"role": current_role(request), "needs_setup": not settings.get("admin_password_hash"),
-            "has_owner_password": bool(settings.get("owner_password_hash"))}
+    ident = current_identity(request)
+    return {"role": ident.role if ident else None, "user": ident.public() if ident else None,
+            "needs_setup": not settings.get("admin_password_hash")}
 
 
 @app.post("/api/auth/login")
-def auth_login(body: Password, request: Request, response: Response) -> dict[str, Any]:
-    """One login box for everyone: the password decides the role (admin or owner)."""
-    if _rate_limited(request):
-        raise HTTPException(429, "too many attempts, try again in 15 minutes")
-    time.sleep(0.3)
-    role = settings.role_for_password(body.password)
-    if role is None:
-        raise HTTPException(401, "wrong password")
-    _set_session(response, request, role)
-    return {"ok": True, "role": role}
+def auth_login(body: Login, request: Request, response: Response) -> dict[str, Any]:
+    """Dashboard login: any active account, or the admin password with an empty email."""
+    ident = _login(body, request)
+    _set_session(response, request, ident)
+    return {"ok": True, "role": ident.role, "user": ident.public()}
 
 
 @app.post("/api/auth/logout")
 def auth_logout(response: Response) -> dict[str, Any]:
     response.delete_cookie(SESSION_COOKIE, path="/")
+    return {"ok": True}
+
+
+class PasswordChange(BaseModel):
+    current: str = Field(max_length=200)
+    new: str = Field(max_length=200)
+
+
+@app.post("/api/auth/password")
+def auth_change_own_password(body: PasswordChange, request: Request, response: Response) -> dict[str, Any]:
+    """A signed-in user changes their own password; every other browser of theirs is logged out."""
+    ident = current_identity(request)
+    if ident is None:
+        raise HTTPException(401, "login required")
+    if ident.is_builtin_admin:
+        raise HTTPException(400, "the admin password is changed under Admin → Security")
+    user = db.get_user(ident.uid, with_hash=True)
+    if user is None or not settings.verify_password(body.current, user.get("password_hash")):
+        raise HTTPException(400, "current password is wrong")
+    if len(body.new) < settings.MIN_PASSWORD_LENGTH:
+        raise HTTPException(400, f"new password must be at least {settings.MIN_PASSWORD_LENGTH} characters")
+    db.update_user(ident.uid, password_hash=settings.hash_password(body.new))
+    db.bump_user_token(ident.uid)  # logs out the other browsers...
+    _set_session(response, request, settings.identity_for_user(db.get_user(ident.uid, with_hash=True)))  # ...but keeps this one
     return {"ok": True}
 
 
@@ -255,6 +306,7 @@ def get_config(request: Request) -> dict[str, Any]:
         "sources": srcs, "counts": db.status_counts(), "demo_loaded": demo.count() > 0,
         "watch_interval_seconds": settings.get_int("watch_interval_seconds", 120),
         "auto_sync_minutes": settings.get_int("auto_sync_minutes", 0), "role": current_role(request), "version": db.ledger_version(),
+        "user": current_identity(request).public(),  # type: ignore[union-attr]  (require_login guarantees a session)
     }
 
 
@@ -467,8 +519,9 @@ async def upload(source_id: int = Form(...), files: list[UploadFile] = File(...)
 
 @app.get("/api/admin/me")
 def admin_me(request: Request) -> dict[str, Any]:
-    role = current_role(request)
-    return {"authenticated": role == "admin", "role": role, "needs_setup": not settings.get("admin_password_hash")}
+    ident = current_identity(request)
+    return {"authenticated": bool(ident and ident.role == "admin"), "role": ident.role if ident else None,
+            "user": ident.public() if ident else None, "needs_setup": not settings.get("admin_password_hash")}
 
 
 @app.post("/api/admin/setup")
@@ -479,19 +532,18 @@ def admin_setup(body: Password, request: Request, response: Response) -> dict[st
     if len(body.password) < settings.MIN_PASSWORD_LENGTH:
         raise HTTPException(400, f"password must be at least {settings.MIN_PASSWORD_LENGTH} characters")
     settings.set_password(body.password, "admin")
-    _set_session(response, request, "admin")
+    _set_session(response, request, settings.Identity(role="admin"))
     return {"ok": True}
 
 
 @app.post("/api/admin/login")
-def admin_login(body: Password, request: Request, response: Response) -> dict[str, Any]:
-    if _rate_limited(request):
-        raise HTTPException(429, "too many attempts, try again in 15 minutes")
-    time.sleep(0.3)  # blunt brute-force damper on top of the rate limit
-    if not settings.check_password(body.password, "admin"):
-        raise HTTPException(401, "wrong password")
-    _set_session(response, request, "admin")
-    return {"ok": True}
+def admin_login(body: Login, request: Request, response: Response) -> dict[str, Any]:
+    """Admin login: the admin password (empty email) or a user account with the admin role."""
+    ident = _login(body, request)
+    if ident.role != "admin":
+        raise HTTPException(403, "this account can use the dashboard but not the admin area")
+    _set_session(response, request, ident)
+    return {"ok": True, "user": ident.public()}
 
 
 @app.post("/api/admin/logout")
@@ -500,37 +552,110 @@ def admin_logout(response: Response) -> dict[str, Any]:
     return {"ok": True}
 
 
-class PasswordChange(BaseModel):
-    current: str = Field(max_length=200)
-    new: str = Field(max_length=200)
-
-
 @app.post("/api/admin/password", dependencies=[Depends(require_admin)])
 def admin_change_password(body: PasswordChange, request: Request, response: Response) -> dict[str, Any]:
+    """Change the built-in admin password. Rotating the signing secret logs every browser out."""
     if not settings.check_password(body.current, "admin"):
         raise HTTPException(400, "current password is wrong")
     if len(body.new) < settings.MIN_PASSWORD_LENGTH:
         raise HTTPException(400, f"new password must be at least {settings.MIN_PASSWORD_LENGTH} characters")
     settings.set_password(body.new, "admin")
     settings.rotate_session_secret()  # log every other browser out
-    _set_session(response, request, "admin")
+    _set_session(response, request, current_identity(request))  # type: ignore[arg-type]
     return {"ok": True}
 
 
-class OwnerPassword(BaseModel):
-    password: str = Field(max_length=200)  # empty string clears it
+# ====================================================================== admin: user accounts
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-@app.post("/api/admin/owner-password", dependencies=[Depends(require_admin)])
-def admin_owner_password(body: OwnerPassword) -> dict[str, Any]:
-    """Set (or clear with "") the separate dashboard password for the owner."""
-    if body.password and len(body.password) < settings.MIN_PASSWORD_LENGTH:
+class UserCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    name: str = Field("", max_length=100)
+    role: str = Field("user", max_length=10)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class UserPatch(BaseModel):
+    name: str | None = Field(None, max_length=100)
+    role: str | None = Field(None, max_length=10)
+    active: bool | None = None
+
+
+def _check_user_fields(email: str | None = None, role: str | None = None, password: str | None = None) -> None:
+    if email is not None and not _EMAIL_RE.match(email.strip()):
+        raise HTTPException(400, "enter a valid email address")
+    if role is not None and role not in db.USER_ROLES:
+        raise HTTPException(400, "role must be 'user' or 'admin'")
+    if password is not None and len(password) < settings.MIN_PASSWORD_LENGTH:
         raise HTTPException(400, f"password must be at least {settings.MIN_PASSWORD_LENGTH} characters")
-    if body.password:
-        settings.set_password(body.password, "owner")
-    else:
-        settings.set_value("owner_password_hash", "")
-    return {"ok": True, "has_owner_password": bool(body.password)}
+
+
+def _get_user_or_404(user_id: int) -> dict[str, Any]:
+    user = db.get_user(user_id)
+    if user is None:
+        raise HTTPException(404, "user not found")
+    return user
+
+
+@app.get("/api/admin/users", dependencies=[Depends(require_admin)])
+def admin_list_users() -> dict[str, Any]:
+    return {"users": db.list_users()}
+
+
+@app.post("/api/admin/users", dependencies=[Depends(require_admin)])
+def admin_create_user(body: UserCreate) -> dict[str, Any]:
+    """Create an account. The admin tells the person their email and the initial password; they can
+    change the password themselves from the dashboard afterwards."""
+    _check_user_fields(email=body.email, role=body.role, password=body.password)
+    try:
+        uid = db.create_user(body.email, body.name or body.email.split("@")[0], body.role, settings.hash_password(body.password))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    log.info("user account created: %s (%s)", body.email.strip().lower(), body.role)
+    return {"ok": True, "user": db.get_user(uid)}
+
+
+@app.patch("/api/admin/users/{user_id}", dependencies=[Depends(require_admin)])
+def admin_update_user(user_id: int, body: UserPatch, request: Request) -> dict[str, Any]:
+    """Rename, change role, enable/disable. An admin cannot lock themselves out."""
+    _get_user_or_404(user_id)
+    _check_user_fields(role=body.role)
+    me = current_identity(request)
+    fields: dict[str, Any] = {}
+    if body.name is not None:
+        fields["name"] = body.name.strip()
+    if body.role is not None:
+        fields["role"] = body.role
+    if body.active is not None:
+        fields["active"] = body.active
+    if me and me.uid == user_id and (fields.get("role") == "user" or fields.get("active") is False):
+        raise HTTPException(400, "you cannot remove your own admin access; ask another admin")
+    db.update_user(user_id, **fields)
+    if fields.get("active") is False or fields.get("role"):
+        db.bump_user_token(user_id)  # take effect in every browser immediately
+    return {"ok": True, "user": db.get_user(user_id)}
+
+
+@app.post("/api/admin/users/{user_id}/password", dependencies=[Depends(require_admin)])
+def admin_reset_user_password(user_id: int, body: Password) -> dict[str, Any]:
+    """Set a new password for someone who forgot theirs; logs them out everywhere."""
+    _get_user_or_404(user_id)
+    _check_user_fields(password=body.password)
+    db.update_user(user_id, password_hash=settings.hash_password(body.password))
+    db.bump_user_token(user_id)
+    return {"ok": True}
+
+
+@app.delete("/api/admin/users/{user_id}", dependencies=[Depends(require_admin)])
+def admin_delete_user(user_id: int, request: Request) -> dict[str, Any]:
+    _get_user_or_404(user_id)
+    me = current_identity(request)
+    if me and me.uid == user_id:
+        raise HTTPException(400, "you cannot delete the account you are signed in with")
+    db.delete_user(user_id)
+    return {"ok": True}
 
 
 # ====================================================================== admin: overview & settings
@@ -546,7 +671,7 @@ def admin_overview() -> dict[str, Any]:
     pub["watch_interval_seconds"] = settings.get_int("watch_interval_seconds", 120)
     return {"settings": pub, "sources": srcs, "sync": sync.status(), "counts": db.status_counts(),
             "demo_loaded": demo.count() > 0, "models": [{"id": m, "label": l} for m, l in extract.MODELS],
-            "production": config.IS_PRODUCTION}
+            "production": config.IS_PRODUCTION, "users": db.list_users()}
 
 
 class SettingsPatch(BaseModel):

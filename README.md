@@ -8,8 +8,8 @@ to SharePoint or Drive.
 
 | Screen | URL | Who |
 |---|---|---|
-| Owner dashboard | `/` | owner (dashboard password) or admin |
-| Admin | `/admin` | admin password only |
+| Owner dashboard | `/` | any user account (email + password); admins too |
+| Admin | `/admin` | accounts with the admin role, or the built-in admin password |
 
 Documentation:
 
@@ -25,7 +25,8 @@ Documentation:
 4. Admin → Microsoft setup: enter the Entra app registration (instructions on the page), then
    Admin → Sources: Add a Microsoft 365 folder → paste the SharePoint folder link → sign in → the
    first sync starts. (Google Drive works the same way via Admin → Google setup.)
-5. Admin → Security: set a dashboard password for the owner. Admin → Data: remove demo data.
+5. Admin → Users & security: create an account (name, email, password) for the owner and anyone
+   else who should see the ledger. Admin → Data: remove demo data.
 
 The dashboard ships with demo data (including generated sample pages for previews) so it can be
 explored before anything is connected.

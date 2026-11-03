@@ -13,12 +13,18 @@ and are never returned by ``public()``; the API key is shown masked instead.
 
 Sessions
 --------
-Login creates a signed, self-contained token: ``<role>.<expires>.<nonce>.<hmac>``. The HMAC is keyed
-with ``session_secret`` (random, generated once, stored in settings). Rotating ``session_secret``
-logs every browser out, which is what happens on a password change.
+Login creates a signed, self-contained token: ``<role>.<uid>.<ver>.<expires>.<nonce>.<hmac>``. The
+HMAC is keyed with ``session_secret`` (random, generated once, stored in settings). Rotating
+``session_secret`` logs every browser out, which is what happens on an admin password change.
 
-Roles: ``admin`` (everything) and ``owner`` (dashboard only). The owner password is optional; while
-it is unset, the dashboard accepts the admin password.
+Who can sign in
+---------------
+* The built-in **admin password** (``admin_password_hash``): created on first run, ``uid`` 0. It is
+  the break-glass login and the only one that exists before any account is created.
+* **User accounts** (``users`` table, see db.py): name, email, password, role ``user`` (dashboard
+  only) or ``admin`` (dashboard + admin area). Their tokens carry the user id and the user's
+  ``token_version``; ``resolve_session()`` checks both against the table on every request so a
+  disabled account or a reset password takes effect immediately.
 
 Debugging tips
 --------------
@@ -35,11 +41,12 @@ import json
 import secrets
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from . import config, crypto, db
 
-SECRET_KEYS = {"anthropic_api_key", "google_client_config", "ms_client_config", "admin_password_hash", "owner_password_hash", "session_secret"}
+SECRET_KEYS = {"anthropic_api_key", "google_client_config", "ms_client_config", "admin_password_hash", "session_secret"}
 PUBLIC_KEYS = [
     "company_name", "company_address", "company_vat", "base_currency", "country", "extract_model", "extract_effort",
     "ask_model", "concurrency", "max_file_mb", "auto_sync_minutes",
@@ -173,7 +180,7 @@ def public() -> dict[str, Any]:
         out["ms_tenant"] = ms.get("tenant") or "common"
         out["ms_has_secret"] = bool(ms.get("client_secret"))
     out["has_admin_password"] = bool(get("admin_password_hash"))
-    out["has_owner_password"] = bool(get("owner_password_hash"))
+    out["user_count"] = db.count_users()
     out["secrets_encrypted"] = crypto.is_enabled()
     out["public_base_url"] = config.PUBLIC_BASE_URL
     return out
@@ -186,33 +193,80 @@ def _hash_password(password: str, salt_hex: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), 200_000).hex()
 
 
-def set_password(password: str, role: str = "admin") -> None:
-    """Store a salted PBKDF2 hash for ``admin`` or ``owner``."""
+def hash_password(password: str) -> str:
+    """``<salt-hex>$<pbkdf2-hex>`` with a fresh random salt (used for the admin password and user accounts)."""
     salt = secrets.token_hex(16)
-    set_value(f"{role}_password_hash", f"{salt}${_hash_password(password, salt)}")
+    return f"{salt}${_hash_password(password, salt)}"
 
 
-def check_password(password: str, role: str = "admin") -> bool:
-    """Constant-time comparison against the stored hash; False when no password is set."""
-    stored = get(f"{role}_password_hash")
+def verify_password(password: str, stored: str | None) -> bool:
+    """Constant-time comparison against a stored ``salt$digest``; False when nothing is stored."""
     if not stored or "$" not in stored:
         return False
     salt, digest = stored.split("$", 1)
     return hmac.compare_digest(_hash_password(password, salt), digest)
 
 
-def role_for_password(password: str) -> str | None:
-    """Which role a password unlocks on the shared login box: admin first, then owner."""
-    if check_password(password, "admin"):
-        return "admin"
-    if check_password(password, "owner"):
-        return "owner"
-    return None
+def set_password(password: str, role: str = "admin") -> None:
+    """Store the built-in admin password hash."""
+    set_value(f"{role}_password_hash", hash_password(password))
+
+
+def check_password(password: str, role: str = "admin") -> bool:
+    """Check the built-in admin password; False when none is set."""
+    return verify_password(password, get(f"{role}_password_hash"))
 
 
 def rotate_session_secret() -> None:
-    """Invalidate every session (used after a password change)."""
+    """Invalidate every session (used after an admin password change)."""
     set_value("session_secret", secrets.token_hex(32))
+
+
+# ---------------------------------------------------------------- identities
+
+
+@dataclass(frozen=True)
+class Identity:
+    """Who is signed in. ``uid`` 0 = the built-in admin password; otherwise a row in ``users``."""
+
+    role: str                 # admin | user
+    uid: int = 0
+    ver: int = 0              # users.token_version at login time
+    name: str = "Admin"
+    email: str | None = None
+
+    @property
+    def is_builtin_admin(self) -> bool:
+        return self.uid == 0
+
+    def public(self) -> dict[str, Any]:
+        return {"role": self.role, "uid": self.uid, "name": self.name, "email": self.email}
+
+
+def identity_for_user(user: dict[str, Any]) -> Identity:
+    """Identity for a full ``users`` row (as returned by ``db.get_user(..., with_hash=True)``)."""
+    return Identity(role=user["role"], uid=int(user["id"]), ver=int(user.get("token_version") or 1),
+                    name=user.get("name") or user["email"], email=user["email"])
+
+
+def authenticate(email: str, password: str) -> Identity | None:
+    """The one login check behind both login boxes.
+
+    * empty email -> the built-in admin password;
+    * otherwise the user account with that email, which must be active.
+    Returns None on any failure (callers answer a uniform 401)."""
+    email = (email or "").strip().lower()
+    if not email:
+        return Identity(role="admin") if check_password(password, "admin") else None
+    user = db.get_user_by_email(email)
+    if user is None or not user.get("active"):
+        # still burn the same time as a real check so email enumeration by timing is harder
+        _hash_password(password, "00" * 16)
+        return None
+    if not verify_password(password, user.get("password_hash")):
+        return None
+    db.touch_user_login(int(user["id"]))
+    return identity_for_user(user)
 
 
 # ---------------------------------------------------------------- sessions
@@ -230,25 +284,47 @@ def _sign(payload: str) -> str:
     return hmac.new(session_secret().encode(), payload.encode(), hashlib.sha256).hexdigest()
 
 
-def make_session_token(role: str) -> str:
-    """``role.expires.nonce.signature`` — stateless, so no session table is needed."""
+def make_session_token(ident: Identity) -> str:
+    """``role.uid.ver.expires.nonce.signature`` — stateless, so no session table is needed."""
     expires = int(time.time()) + SESSION_TTL_SECONDS
-    payload = f"{role}.{expires}.{secrets.token_hex(8)}"
+    payload = f"{ident.role}.{ident.uid}.{ident.ver}.{expires}.{secrets.token_hex(8)}"
     return f"{payload}.{_sign(payload)}"
 
 
-def session_role(token: str | None) -> str | None:
-    """Return the role encoded in a valid, unexpired token, else None."""
-    if not token or token.count(".") != 3:
+def parse_session_token(token: str | None) -> tuple[str, int, int] | None:
+    """(role, uid, ver) from a validly signed, unexpired token; None otherwise. No database access."""
+    if not token or token.count(".") != 5:
         return None
-    role, expires, nonce, sig = token.split(".")
-    if role not in ("admin", "owner"):
+    role, uid, ver, expires, nonce, sig = token.split(".")
+    if role not in ("admin", "user"):
         return None
     try:
         if int(expires) < time.time():
             return None
+        uid_i, ver_i = int(uid), int(ver)
     except ValueError:
         return None
-    if not hmac.compare_digest(sig, _sign(f"{role}.{expires}.{nonce}")):
+    if not hmac.compare_digest(sig, _sign(f"{role}.{uid}.{ver}.{expires}.{nonce}")):
         return None
-    return role
+    return role, uid_i, ver_i
+
+
+def resolve_session(token: str | None) -> Identity | None:
+    """Token -> Identity. For user accounts the row must still exist, be active and have the same
+    ``token_version``; the role is always taken from the table, never from the cookie."""
+    parsed = parse_session_token(token)
+    if parsed is None:
+        return None
+    role, uid, ver = parsed
+    if uid == 0:
+        return Identity(role="admin") if role == "admin" else None
+    user = db.get_user(uid, with_hash=True)
+    if user is None or not user.get("active") or int(user.get("token_version") or 1) != ver:
+        return None
+    return identity_for_user(user)
+
+
+def session_role(token: str | None) -> str | None:
+    """Convenience wrapper: the role of a valid session, else None."""
+    ident = resolve_session(token)
+    return ident.role if ident else None

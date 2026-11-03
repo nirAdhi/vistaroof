@@ -13,10 +13,11 @@ test suite in `tests/` (34 tests, of which 11 are security-specific).
 | Google OAuth refresh tokens (read access to whole Drives, create-file access) | High | `sources.token_json`, encrypted |
 | Microsoft 365 refresh tokens (read, and optionally write, every file the signed-in account can reach) | High | `sources.token_json`, encrypted; delegated scopes only, PKCE flow, scopes stored with the token |
 | Google OAuth client secret / Microsoft app client secret | Medium | `settings`, encrypted; never returned by the API |
-| Admin / owner passwords | High | PBKDF2-SHA256 hashes, 200k iterations, per-user salt |
+| Admin password and user account passwords | High | PBKDF2-SHA256 hashes, 200k iterations, per-user salt (`settings`, `users.password_hash`) |
 | Session signing secret | High | `settings.session_secret` |
 
-Actors: **admin** (full control), **owner** (read dashboard, upload, edit figures, ask questions),
+Actors: **admin** (full control: the built-in admin password or an account with the admin role),
+**user** (a named account: read dashboard, upload, edit figures, ask questions),
 **anonymous network user**, **a malicious document** placed in a watched Drive, **Google / Anthropic**
 as third parties.
 
@@ -25,11 +26,20 @@ as third parties.
 ### Authentication and sessions
 - Every data endpoint requires a session; only the two HTML pages, `/static`, `/healthz`, the login
   endpoints and the OAuth callback are reachable anonymously (`tests/test_security.py::test_everything_requires_login`).
-- Two roles. Owner sessions get 403 on every `/api/admin/*` route and on the OAuth connect route.
+- Named accounts (`users` table) with role `user` or `admin`; the built-in admin password is the
+  fallback (empty email). User sessions get 403 on every `/api/admin/*` route and on the OAuth
+  connect route; `/api/admin/login` refuses accounts without the admin role.
 - Session cookie: `HttpOnly`, `SameSite=Lax`, `Secure` when served over HTTPS (or `PUBLIC_BASE_URL`
-  is https), 14-day expiry embedded in the HMAC-signed token. Changing the admin password rotates the
-  signing secret and logs every browser out.
-- Minimum password length 10; passwords are never logged or returned.
+  is https), 14-day expiry embedded in the HMAC-signed token
+  (`role.uid.token_version.expires.nonce.hmac`). For accounts the role is taken from the table on
+  every request, never from the cookie, and the embedded `token_version` must match: disabling an
+  account, changing its role or resetting its password bumps the version and ends its sessions at
+  once. Changing the admin password rotates the signing secret and logs every browser out.
+- An admin cannot demote, disable or delete the account they are signed in with (prevents lock-out).
+- Login answers "wrong email or password" for unknown and disabled accounts alike and spends a hash
+  computation either way, so emails cannot be enumerated by message or timing.
+- Minimum password length 10; passwords are never logged or returned (the API strips
+  `password_hash` from every user row).
 - Login rate limit: 10 attempts per client IP per 15 minutes on both login endpoints, plus a 300 ms
   delay per attempt. With Docker/Caddy the real IP comes from `X-Forwarded-For` (uvicorn
   `--proxy-headers`).
@@ -86,7 +96,7 @@ as third parties.
 
 | # | Finding | Severity | Fix |
 |---|---|---|---|
-| 1 | Owner dashboard and the entire read API were unauthenticated | Critical on a server | Session login for every data route; owner role with its own password |
+| 1 | Owner dashboard and the entire read API were unauthenticated | Critical on a server | Session login for every data route; named user accounts with roles |
 | 2 | Session tokens never expired | High | Expiry inside the signed token; secret rotation on password change |
 | 3 | API key and Google tokens stored in plain text | High | Fernet encryption at rest with `APP_SECRET_KEY` |
 | 4 | No login rate limiting beyond a fixed delay | High | Per-IP sliding window (10 / 15 min) |
@@ -103,10 +113,11 @@ as third parties.
 
 ## 4. Residual risks and recommendations
 
-- **Single admin password, no MFA.** Acceptable for a small company behind HTTPS; for stronger
+- **Passwords only, no MFA.** Acceptable for a small company behind HTTPS; for stronger
   assurance put the app behind an identity-aware proxy (Cloudflare Access, Tailscale) or a VPN.
-  The app already works correctly behind such proxies.
-- **Owner role can edit figures and upload.** By design; every edit is marked `overridden` and the
+  The app already works correctly behind such proxies. Keep the number of admin-role accounts small
+  and prefer accounts over the shared built-in admin password so sign-ins are attributable.
+- **User role can edit figures and upload.** By design; every edit is marked `overridden` and the
   original is one click away in the preview.
 - **Google tokens grant read access to whole Drives.** Limit each source to a folder where possible,
   connect a dedicated accounts Google account, and disconnect sources no longer needed.
@@ -125,5 +136,5 @@ pip-audit                     # 0 vulnerabilities
 bandit -r app -ll             # 0 medium/high
 pytest tests                  # all green
 ```
-Then confirm in Admin → Security that all four status lines are green (admin password, dashboard
-password, secrets encrypted, public URL pinned).
+Then confirm in Admin → Users & security that all four status lines are green (admin password, at
+least one user account, secrets encrypted, public URL pinned).

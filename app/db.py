@@ -11,6 +11,9 @@ documents   one row per file seen in a source. Lifecycle of ``status``:
               longer in the source. Only ``done`` rows take part in the dashboard numbers.
             ``overridden=1`` marks hand edits that must never be overwritten by a re-read.
 sync_runs   one row per sync of one source, for the Sync log.
+users       named sign-in accounts for the dashboard (and, with ``role='admin'``, the admin area).
+            ``token_version`` is embedded in every session token; bumping it logs that person out of
+            every browser (used when an admin resets their password or disables the account).
 
 Concurrency
 -----------
@@ -122,6 +125,18 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     message TEXT,
     trigger TEXT                     -- manual | watch | schedule | upload | oauth
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,      -- lower-cased sign-in name
+    name TEXT,
+    role TEXT NOT NULL DEFAULT 'user',   -- user (dashboard) | admin (dashboard + admin area)
+    password_hash TEXT NOT NULL,     -- <salt>$<pbkdf2>, see settings.hash_password()
+    active INTEGER NOT NULL DEFAULT 1,
+    token_version INTEGER NOT NULL DEFAULT 1,  -- bump to invalidate this user's sessions
+    created_at TEXT,
+    last_login_at TEXT
+);
 """
 
 DOC_COLUMNS = [
@@ -171,6 +186,8 @@ _SOURCE_COLUMNS = {"name", "enabled", "drive_folder_id", "local_folder", "token_
                    "last_status", "last_error", "drive_page_token", "last_change_check",
                    "ms_link", "ms_location", "ms_tenant", "ms_upload"}
 _RUN_COLUMNS = {"finished_at", "total", "processed", "skipped", "errors", "removed", "status", "message"}
+_USER_COLUMNS = {"name", "role", "active", "password_hash"}
+USER_ROLES = ("user", "admin")
 
 
 def _assert_columns(fields: dict[str, Any], allowed: set[str]) -> None:
@@ -278,6 +295,88 @@ def delete_source(source_id: int) -> int:
         conn.execute("DELETE FROM sources WHERE id=?", (source_id,))
     _touch()
     return n
+
+
+# ---------------------------------------------------------------- users
+
+
+def _user_public(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    """Row -> dict without the password hash (what the API returns)."""
+    if row is None:
+        return None
+    d = dict(row)
+    d.pop("password_hash", None)
+    d["active"] = bool(d.get("active"))
+    return d
+
+
+def create_user(email: str, name: str, role: str, password_hash: str) -> int:
+    """Insert an account. Raises ValueError when the email is already taken or the role is unknown."""
+    if role not in USER_ROLES:
+        raise ValueError(f"unknown role {role!r}")
+    try:
+        with connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO users (email, name, role, password_hash, active, token_version, created_at) VALUES (?, ?, ?, ?, 1, 1, ?)",
+                (email.strip().lower(), name.strip(), role, password_hash, now_iso()),
+            )
+            return int(cur.lastrowid)
+    except sqlite3.IntegrityError as exc:
+        raise ValueError("an account with this email already exists") from exc
+
+
+def get_user(user_id: int, with_hash: bool = False) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    return (dict(row) if row else None) if with_hash else _user_public(row)
+
+
+def get_user_by_email(email: str) -> dict[str, Any] | None:
+    """Full row (including ``password_hash``) for the login check."""
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE email=?", (email.strip().lower(),)).fetchone()
+    return dict(row) if row else None
+
+
+def list_users() -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM users ORDER BY role DESC, lower(name), email").fetchall()
+    return [_user_public(r) for r in rows]  # type: ignore[misc]
+
+
+def update_user(user_id: int, **fields: Any) -> None:
+    """Update whitelisted columns (name, role, active, password_hash)."""
+    if not fields:
+        return
+    _assert_columns(fields, _USER_COLUMNS)
+    if "role" in fields and fields["role"] not in USER_ROLES:
+        raise ValueError(f"unknown role {fields['role']!r}")
+    if "active" in fields:
+        fields["active"] = 1 if fields["active"] else 0
+    sets = ", ".join(f"{k}=?" for k in fields)
+    with connect() as conn:
+        conn.execute(f"UPDATE users SET {sets} WHERE id=?", (*fields.values(), user_id))  # nosec B608 - names whitelisted
+
+
+def bump_user_token(user_id: int) -> None:
+    """Invalidate every session of this user (password reset, disable)."""
+    with connect() as conn:
+        conn.execute("UPDATE users SET token_version = token_version + 1 WHERE id=?", (user_id,))
+
+
+def touch_user_login(user_id: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now_iso(), user_id))
+
+
+def delete_user(user_id: int) -> bool:
+    with connect() as conn:
+        return conn.execute("DELETE FROM users WHERE id=?", (user_id,)).rowcount > 0
+
+
+def count_users() -> int:
+    with connect() as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM users").fetchone()[0])
 
 
 # ---------------------------------------------------------------- documents

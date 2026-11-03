@@ -47,10 +47,14 @@ Non-goals (this version)
 
 | Role | Who | Can |
 |---|---|---|
-| Owner | the company owner / office manager | view every screen, upload documents, correct readings, ask questions, trigger a sync |
-| Admin | whoever set the system up (may be the same person) | everything the owner can, plus: Claude key and model, company details, Google OAuth client, add/connect/remove Drives and folders, passwords, backups, demo data |
+| User | the owner, office manager, bookkeeper — anyone who should see the figures | view every screen, upload documents, correct readings, ask questions, trigger a sync, change their own password |
+| Admin | whoever set the system up (may be the same person) | everything a user can, plus: Claude key and model, company details, Google / Microsoft app registrations, add/connect/remove sources, **user accounts**, passwords, backups, demo data |
 
-Both roles sign in with a password on the same login box; the password decides the role.
+Everyone has a personal account: name, email (the sign-in name), password, role. Accounts are
+created, renamed, disabled, reset and removed under Admin → Users & security; an admin can give
+another account the admin role. The built-in admin password created on first run remains as the
+fallback login (email left empty) and is the only credential that exists before accounts are added.
+Disabling an account or resetting its password ends its sessions in every browser immediately.
 
 ## 5. Functional requirements
 
@@ -137,7 +141,9 @@ sales invoices with status unpaid/partial/overdue/unknown less amount paid; over
 - FR-26 Google setup: upload/paste the OAuth client JSON once.
 - FR-27 Sync log of every run (trigger, counts, errors) and the current run's failures.
 - FR-28 Data: demo data load/remove, database backup download, delete all documents.
-- FR-29 Security: admin password change (logs other sessions out), owner password set/remove,
+- FR-29 Users & security: user accounts (create with name/email/role/initial password, rename,
+  change role, disable/enable, reset password, remove; self-service password change from the
+  dashboard), admin password change (logs other sessions out),
   production status lines.
 
 ## 6. Non-functional requirements
@@ -175,7 +181,8 @@ top of `app/db.py`.
 
 | Method & path | Role | Purpose |
 |---|---|---|
-| GET /api/auth/me · POST /api/auth/login · POST /api/auth/logout | any | shared login |
+| GET /api/auth/me · POST /api/auth/login · POST /api/auth/logout · POST /api/auth/password | any | login (email + password, or admin password with empty email), own password change |
+| GET/POST /api/admin/users · PATCH/DELETE /api/admin/users/{id} · POST /api/admin/users/{id}/password | admin | user accounts |
 | GET /api/config, /api/meta, /api/version | owner | UI bootstrap, live-refresh marker |
 | GET /api/summary?from&to · GET /api/companies | owner | aggregates |
 | GET /api/documents… · GET /api/documents/{id} · GET /api/documents/{id}/preview[?embed=1] | owner | ledger, file |

@@ -32,8 +32,8 @@
   <div class="spacer"></div>
   <button class="btn primary" id="uploadBtn" title="Upload invoices or receipts into Google Drive and the ledger">⬆ Upload</button>
   <button class="btn" id="syncBtn" title="Scan every connected source for new or changed documents">Sync now</button>
-  <a class="btn" href="/admin" title="API keys, Google Drives, settings">Admin</a>
-  <button class="btn" id="logoutBtn" title="Log out">Log out</button>
+  <a class="btn" href="/admin" id="adminLink" title="API keys, sources, users, settings">Admin</a>
+  <button class="btn" id="accountBtn" title="Your account">Account</button>
   <button class="icon-btn" id="themeBtn" title="Toggle light / dark">◐</button>
 </header>
 
@@ -41,12 +41,32 @@
 <div class="auth-wrap" id="authWrap" style="display:none">
   <div class="card auth-card">
     <h2>Sign in</h2>
-    <p class="muted">Enter the dashboard password (or the admin password).</p>
+    <p class="muted">Use the email and password the administrator gave you.</p>
     <form id="authForm">
+      <input type="email" id="authEmail" placeholder="Email" autocomplete="username" inputmode="email">
       <input type="password" id="authPassword" placeholder="Password" autocomplete="current-password" required>
       <button class="btn primary" type="submit">Sign in</button>
       <div class="neg small" id="authError"></div>
     </form>
+    <p class="muted small" style="margin-top:12px">Administrator? Leave the email empty and enter the admin password.</p>
+  </div>
+</div>
+
+<!-- account window: who is signed in, change password, log out -->
+<div class="modal-backdrop" id="accountBackdrop"></div>
+<div class="modal account" id="accountModal" role="dialog" aria-label="Your account">
+  <div class="modal-head">
+    <div><h2 id="accountName">Account</h2><div class="muted small" id="accountMeta"></div></div>
+    <button class="icon-btn" id="accountClose" aria-label="Close">✕</button>
+  </div>
+  <div class="modal-body">
+    <form id="accountPasswordForm" class="form">
+      <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+      <label>New password (10+ characters) <input name="new" type="password" autocomplete="new-password" minlength="10" required></label>
+      <div class="actions"><button class="btn primary" type="submit">Change password</button><span class="muted small">Signs your other devices out.</span></div>
+    </form>
+    <p class="muted small" id="accountBuiltin" style="display:none">You are signed in with the admin password. Change it under <a href="/admin#security">Admin → Security</a>, where you can also create accounts for other people.</p>
+    <div class="actions" style="margin-top:16px;display:flex;gap:8px"><button class="btn" id="logoutBtn">Log out</button></div>
   </div>
 </div>
 

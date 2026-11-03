@@ -31,8 +31,8 @@ docker compose logs -f app      # wait for "Application startup complete"
 ```
 
 Open `https://<your domain>/admin`, create the admin password, then follow *Admin → Google setup*
-and *Admin → Sources*. The owner uses `https://<your domain>/` with the dashboard password you set
-under *Admin → Security*.
+and *Admin → Sources*. Create an account for the owner and each colleague under *Admin → Users &
+security*; they sign in at `https://<your domain>/` with their email and password.
 
 What the stack does:
 

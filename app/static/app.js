@@ -69,17 +69,43 @@
 
   // ------------------------------------------------------------ login
   function showLogin() {
+    closeAccount();
     $("#authWrap").style.display = "grid";
     $("main").style.display = "none"; $(".filterbar").style.display = "none";
-    $("#authPassword").focus();
+    $("#accountBtn").style.display = "none"; $("#adminLink").style.display = "none";
+    ($("#authEmail").value ? $("#authPassword") : $("#authEmail")).focus();
   }
-  function hideLogin() { $("#authWrap").style.display = "none"; $("main").style.display = ""; $(".filterbar").style.display = ""; }
+  function hideLogin() { $("#authWrap").style.display = "none"; $("main").style.display = ""; $(".filterbar").style.display = ""; $("#accountBtn").style.display = ""; }
   $("#authForm").addEventListener("submit", async (e) => {
     e.preventDefault(); $("#authError").textContent = "";
     try {
-      await api("/api/auth/login", { method: "POST", body: JSON.stringify({ password: $("#authPassword").value }) });
+      await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email: $("#authEmail").value.trim(), password: $("#authPassword").value }) });
       $("#authPassword").value = ""; hideLogin(); await init();
     } catch (err) { $("#authError").textContent = err.message; }
+  });
+
+  // ------------------------------------------------------------ account window (who am I, change password, log out)
+  const accountModal = $("#accountModal"), accountBackdrop = $("#accountBackdrop");
+  function closeAccount() { accountModal.classList.remove("open"); accountBackdrop.classList.remove("open"); }
+  /** Reflect the signed-in person in the header and the account window. */
+  function renderUser(u) {
+    const me = u || {};
+    $("#accountBtn").textContent = me.name || "Account";
+    $("#accountName").textContent = me.name || "Account";
+    $("#accountMeta").textContent = [me.email, me.role === "admin" ? "administrator" : "dashboard user"].filter(Boolean).join(" · ");
+    $("#adminLink").style.display = me.role === "admin" ? "" : "none";
+    const builtin = !me.uid;  // uid 0 = signed in with the admin password, which has no account row
+    $("#accountPasswordForm").style.display = builtin ? "none" : "";
+    $("#accountBuiltin").style.display = builtin ? "" : "none";
+  }
+  $("#accountBtn").addEventListener("click", () => { accountModal.classList.add("open"); accountBackdrop.classList.add("open"); });
+  $("#accountClose").addEventListener("click", closeAccount);
+  accountBackdrop.addEventListener("click", closeAccount);
+  $("#accountPasswordForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target).entries());
+    try { await api("/api/auth/password", { method: "POST", body: JSON.stringify(body) }); toast("Password changed"); e.target.reset(); closeAccount(); }
+    catch (err) { toast(err.message, 6000); }
   });
   $("#logoutBtn").addEventListener("click", async () => { await api("/api/auth/logout", { method: "POST" }); showLogin(); });
 
@@ -639,7 +665,7 @@
   const drawer = $("#drawer"), backdrop = $("#drawerBackdrop");
   function closeDrawer() { drawer.classList.remove("open"); backdrop.classList.remove("open"); }
   backdrop.addEventListener("click", closeDrawer);
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (viewer.classList.contains("open")) closeViewer(); else if (drawer.classList.contains("open")) closeDrawer(); else closeCompany(); } });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (viewer.classList.contains("open")) closeViewer(); else if (drawer.classList.contains("open")) closeDrawer(); else if (accountModal.classList.contains("open")) closeAccount(); else closeCompany(); } });
 
   /** Details drawer: inline preview + editable extracted fields (PATCH) + re-read (POST reprocess). */
   async function openDoc(id) {
@@ -853,6 +879,7 @@
     if (me.needs_setup) { location.href = "/admin"; return; }
     if (!me.role) { showLogin(); return; }
     hideLogin();
+    renderUser(me.user);
     state.config = await api("/api/config");
     lastVersion = state.config.version;
     state.meta = await api("/api/meta");

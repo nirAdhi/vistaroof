@@ -229,7 +229,8 @@ def fresh_db():
         conn.execute("DELETE FROM documents")
         conn.execute("DELETE FROM sources")
         conn.execute("DELETE FROM sync_runs")
-        conn.execute("DELETE FROM settings WHERE key IN ('owner_password_hash', 'anthropic_api_key', 'google_client_config', 'ms_client_config')")
+        conn.execute("DELETE FROM users")
+        conn.execute("DELETE FROM settings WHERE key IN ('anthropic_api_key', 'google_client_config', 'ms_client_config')")
     settings.invalidate()
 
 
@@ -251,3 +252,18 @@ def admin(client):
         r = client.post("/api/admin/setup", json={"password": ADMIN_PW})
     assert r.status_code == 200, r.text
     return client
+
+
+def make_user(admin_client, email: str = "cormac@example.ie", name: str = "Cormac", role: str = "user", password: str = OWNER_PW) -> dict:
+    """Create a user account through the admin API and return its row."""
+    r = admin_client.post("/api/admin/users", json={"email": email, "name": name, "role": role, "password": password})
+    assert r.status_code == 200, r.text
+    return r.json()["user"]
+
+
+def login_as(email: str, password: str = OWNER_PW) -> TestClient:
+    """A fresh browser signed in through the dashboard login box."""
+    c = TestClient(main.app)
+    r = c.post("/api/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
+    return c

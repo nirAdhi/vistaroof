@@ -1,0 +1,96 @@
+"""User accounts: creation rules, roles, disabling, password reset / self-service, deletion."""
+from __future__ import annotations
+
+from fastapi.testclient import TestClient
+
+from app import db, main
+
+from conftest import ADMIN_PW, OWNER_PW, login_as, make_user
+
+
+def test_create_user_validation(admin, fresh_db):
+    post = lambda body: admin.post("/api/admin/users", json=body)  # noqa: E731
+    assert post({"email": "not-an-email", "password": OWNER_PW}).status_code == 400
+    assert post({"email": "a@b.ie", "password": "short"}).status_code == 400
+    assert post({"email": "a@b.ie", "password": OWNER_PW, "role": "superuser"}).status_code == 400
+    r = post({"email": "  Anne@Example.IE ", "password": OWNER_PW})  # name defaults to the local part, email is normalised
+    assert r.status_code == 200
+    u = r.json()["user"]
+    assert u["email"] == "anne@example.ie" and u["name"] == "Anne" and u["role"] == "user" and u["active"] is True
+    assert "password_hash" not in u
+    assert post({"email": "anne@example.ie", "name": "Dup", "password": OWNER_PW}).status_code == 400  # duplicate
+    users = admin.get("/api/admin/users").json()["users"]
+    assert [x["email"] for x in users] == ["anne@example.ie"]
+    assert admin.get("/api/admin/overview").json()["users"] == users
+    assert admin.get("/api/admin/overview").json()["settings"]["user_count"] == 1
+
+
+def test_admin_role_user_can_open_admin_area(admin, fresh_db):
+    make_user(admin, email="boss@example.ie", name="Boss", role="admin")
+    boss = TestClient(main.app)
+    r = boss.post("/api/admin/login", json={"email": "boss@example.ie", "password": OWNER_PW})
+    assert r.status_code == 200 and r.json()["user"]["role"] == "admin"
+    assert boss.get("/api/admin/overview").status_code == 200
+    me = boss.get("/api/admin/me").json()
+    assert me["authenticated"] is True and me["user"]["email"] == "boss@example.ie"
+    assert db.get_user(me["user"]["uid"])["last_login_at"] is not None
+    # an admin cannot lock themselves out
+    uid = me["user"]["uid"]
+    assert boss.patch(f"/api/admin/users/{uid}", json={"role": "user"}).status_code == 400
+    assert boss.patch(f"/api/admin/users/{uid}", json={"active": False}).status_code == 400
+    assert boss.delete(f"/api/admin/users/{uid}").status_code == 400
+    # ...but the built-in admin can demote them, which ends their session at once
+    assert admin.patch(f"/api/admin/users/{uid}", json={"role": "user"}).json()["user"]["role"] == "user"
+    assert boss.get("/api/admin/overview").status_code == 401
+
+
+def test_disable_and_enable_takes_effect_immediately(admin, fresh_db):
+    u = make_user(admin)
+    user = login_as(u["email"])
+    assert user.get("/api/summary").status_code == 200
+    assert admin.patch(f"/api/admin/users/{u['id']}", json={"active": False}).json()["user"]["active"] is False
+    assert user.get("/api/summary").status_code == 401  # existing session dead
+    assert TestClient(main.app).post("/api/auth/login", json={"email": u["email"], "password": OWNER_PW}).status_code == 401
+    admin.patch(f"/api/admin/users/{u['id']}", json={"active": True, "name": "Cormac S."})
+    again = login_as(u["email"])
+    assert again.get("/api/config").json()["user"]["name"] == "Cormac S."
+
+
+def test_admin_password_reset_logs_user_out(admin, fresh_db):
+    u = make_user(admin)
+    user = login_as(u["email"])
+    assert admin.post(f"/api/admin/users/{u['id']}/password", json={"password": "short"}).status_code == 400
+    assert admin.post(f"/api/admin/users/{u['id']}/password", json={"password": "brand-new-pass-1"}).status_code == 200
+    assert user.get("/api/summary").status_code == 401
+    assert TestClient(main.app).post("/api/auth/login", json={"email": u["email"], "password": OWNER_PW}).status_code == 401
+    assert login_as(u["email"], "brand-new-pass-1").get("/api/summary").status_code == 200
+
+
+def test_user_changes_own_password(admin, fresh_db):
+    u = make_user(admin)
+    phone, laptop = login_as(u["email"]), login_as(u["email"])
+    assert laptop.post("/api/auth/password", json={"current": "nope", "new": "another-pass-12"}).status_code == 400
+    assert laptop.post("/api/auth/password", json={"current": OWNER_PW, "new": "short"}).status_code == 400
+    assert laptop.post("/api/auth/password", json={"current": OWNER_PW, "new": "another-pass-12"}).status_code == 200
+    assert laptop.get("/api/summary").status_code == 200  # this browser stays signed in
+    assert phone.get("/api/summary").status_code == 401   # the other one is out
+    assert login_as(u["email"], "another-pass-12").get("/api/summary").status_code == 200
+    # the built-in admin has no account row to change
+    assert admin.post("/api/auth/password", json={"current": ADMIN_PW, "new": "another-pass-12"}).status_code == 400
+    assert TestClient(main.app).post("/api/auth/password", json={"current": "x", "new": "y" * 10}).status_code == 401
+
+
+def test_delete_user(admin, fresh_db):
+    u = make_user(admin)
+    user = login_as(u["email"])
+    assert admin.delete(f"/api/admin/users/{u['id']}").status_code == 200
+    assert admin.delete(f"/api/admin/users/{u['id']}").status_code == 404
+    assert user.get("/api/summary").status_code == 401
+    assert admin.get("/api/admin/users").json()["users"] == []
+
+
+def test_login_box_accepts_password_only_for_admin(client, fresh_db):
+    client.cookies.clear()
+    assert client.post("/api/auth/login", json={"password": ADMIN_PW}).json()["role"] == "admin"
+    assert client.post("/api/auth/login", json={"email": "", "password": "wrong-password-x"}).status_code == 401
+    assert client.post("/api/auth/login", json={"email": "ghost@example.ie", "password": ADMIN_PW}).status_code == 401

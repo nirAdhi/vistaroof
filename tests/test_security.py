@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app import crypto, db, main, settings, sources
 
-from conftest import ADMIN_PW, OWNER_PW
+from conftest import ADMIN_PW, OWNER_PW, login_as, make_user
 
 
 def test_everything_requires_login(client, fresh_db):
@@ -35,7 +35,7 @@ def test_admin_setup_login_and_password_rules(client, fresh_db):
     assert client.get("/api/admin/me").json()["authenticated"] is True
     assert client.post("/api/admin/setup", json={"password": "another-pw-123"}).status_code == 400
     client.post("/api/admin/logout")
-    assert client.get("/api/admin/me").json() == {"authenticated": False, "role": None, "needs_setup": False}
+    assert client.get("/api/admin/me").json() == {"authenticated": False, "role": None, "user": None, "needs_setup": False}
     assert client.post("/api/admin/login", json={"password": "wrong-password"}).status_code == 401
     assert client.post("/api/admin/login", json={"password": ADMIN_PW}).status_code == 200
     assert client.post("/api/admin/password", json={"current": "nope", "new": "new-password-1"}).status_code == 400
@@ -47,35 +47,43 @@ def test_admin_setup_login_and_password_rules(client, fresh_db):
     client.post("/api/admin/password", json={"current": "new-password-1", "new": ADMIN_PW})  # restore for other tests
 
 
-def test_owner_role_sees_dashboard_but_not_admin(admin, fresh_db):
-    assert admin.post("/api/admin/owner-password", json={"password": "short"}).status_code == 400
-    assert admin.post("/api/admin/owner-password", json={"password": OWNER_PW}).json()["has_owner_password"] is True
-    owner = TestClient(main.app)
-    assert owner.get("/api/summary").status_code == 401
-    r = owner.post("/api/auth/login", json={"password": OWNER_PW})
-    assert r.status_code == 200 and r.json()["role"] == "owner"
-    assert owner.get("/api/summary").status_code == 200
-    assert owner.get("/api/config").json()["role"] == "owner"
-    assert owner.get("/api/admin/overview").status_code == 403
-    assert owner.put("/api/admin/settings", json={"company_name": "x"}).status_code == 403
-    assert owner.get("/admin/sources/1/connect", follow_redirects=False).status_code == 303  # bounced to /admin
-    # the shared login box also accepts the admin password and grants admin
-    owner.post("/api/auth/logout")
-    assert owner.post("/api/auth/login", json={"password": ADMIN_PW}).json()["role"] == "admin"
-    assert owner.get("/api/admin/overview").status_code == 200
-    # removing the owner password makes the owner password stop working
-    admin.post("/api/admin/owner-password", json={"password": ""})
-    other = TestClient(main.app)
-    assert other.post("/api/auth/login", json={"password": OWNER_PW}).status_code == 401
+def test_user_account_sees_dashboard_but_not_admin(admin, fresh_db):
+    make_user(admin)
+    user = TestClient(main.app)
+    assert user.get("/api/summary").status_code == 401
+    assert user.post("/api/auth/login", json={"email": "cormac@example.ie", "password": "wrong-password"}).status_code == 401
+    r = user.post("/api/auth/login", json={"email": "Cormac@Example.ie", "password": OWNER_PW})  # email is case-insensitive
+    assert r.status_code == 200 and r.json()["role"] == "user" and r.json()["user"]["name"] == "Cormac"
+    assert user.get("/api/summary").status_code == 200
+    cfg = user.get("/api/config").json()
+    assert cfg["role"] == "user" and cfg["user"]["email"] == "cormac@example.ie"
+    assert user.get("/api/admin/overview").status_code == 403
+    assert user.put("/api/admin/settings", json={"company_name": "x"}).status_code == 403
+    assert user.post("/api/admin/users", json={"email": "x@y.ie", "password": OWNER_PW}).status_code == 403
+    assert user.get("/admin/sources/1/connect", follow_redirects=False).status_code == 303  # bounced to /admin
+    # a plain user cannot log in to the admin area either
+    assert user.post("/api/admin/login", json={"email": "cormac@example.ie", "password": OWNER_PW}).status_code == 403
+    # the dashboard login box also accepts the admin password (empty email) and grants admin
+    user.post("/api/auth/logout")
+    me = user.post("/api/auth/login", json={"password": ADMIN_PW}).json()
+    assert me["role"] == "admin" and me["user"]["uid"] == 0
+    assert user.get("/api/admin/overview").status_code == 200
 
 
-def test_session_tokens_expire_and_cannot_be_forged():
-    tok = settings.make_session_token("owner")
-    assert settings.session_role(tok) == "owner"
-    role, exp, nonce, sig = tok.split(".")
-    assert settings.session_role(f"admin.{exp}.{nonce}.{sig}") is None  # role swap breaks the signature
-    assert settings.session_role(f"{role}.{int(time.time()) - 10}.{nonce}.{sig}") is None  # expired + re-signed needed
+def test_session_tokens_expire_and_cannot_be_forged(admin, fresh_db):
+    u = make_user(admin)
+    tok = settings.make_session_token(settings.Identity("user", u["id"], 1, "Cormac", u["email"]))
+    assert settings.session_role(tok) == "user"
+    role, uid, ver, exp, nonce, sig = tok.split(".")
+    assert settings.session_role(f"admin.{uid}.{ver}.{exp}.{nonce}.{sig}") is None  # role swap breaks the signature
+    assert settings.session_role(f"{role}.0.{ver}.{exp}.{nonce}.{sig}") is None  # uid swap too
+    assert settings.session_role(f"{role}.{uid}.{ver}.{int(time.time()) - 10}.{nonce}.{sig}") is None  # expired + re-signed needed
     assert settings.session_role("garbage") is None and settings.session_role(None) is None
+    # a validly signed token for a deleted user is worthless
+    db.delete_user(u["id"])
+    assert settings.session_role(tok) is None
+    # the built-in admin token never consults the users table
+    assert settings.session_role(settings.make_session_token(settings.Identity("admin"))) == "admin"
 
 
 def test_login_rate_limit(client, fresh_db):

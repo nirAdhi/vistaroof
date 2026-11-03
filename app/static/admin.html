@@ -28,6 +28,7 @@
     <h2 id="authTitle">Admin login</h2>
     <p class="muted" id="authHint"></p>
     <form id="authForm">
+      <input type="email" id="authEmail" placeholder="Email (leave empty for the admin password)" autocomplete="username" inputmode="email">
       <input type="password" id="authPassword" placeholder="Password" autocomplete="current-password" required>
       <input type="password" id="authPassword2" placeholder="Repeat password" autocomplete="new-password" style="display:none">
       <button class="btn primary" type="submit" id="authSubmit">Log in</button>
@@ -45,7 +46,7 @@
     <button data-sec="microsoft">Microsoft setup</button>
     <button data-sec="log">Sync log</button>
     <button data-sec="data">Data</button>
-    <button data-sec="security">Security</button>
+    <button data-sec="security">Users &amp; security</button>
   </nav>
 
   <main class="admin-main">
@@ -215,25 +216,32 @@
 
     <!-- ===== SECURITY ===== -->
     <section class="sec" id="sec-security">
-      <div class="sec-head"><h2>Security</h2><div class="muted">Two passwords: the <b>admin</b> password opens everything; the optional <b>dashboard</b> password lets the owner see the figures without reaching these settings.</div></div>
+      <div class="sec-head"><h2>Security &amp; users</h2><div class="muted">Everyone who uses the ledger gets their own account (email + password). <b>Users</b> see the dashboard: figures, documents, uploads, questions. <b>Admins</b> also open this area. The built-in admin password stays as a fallback login with the email left empty.</div></div>
       <div class="card" id="securityStatus"></div>
+      <div class="card" style="margin-top:14px">
+        <h3>User accounts</h3>
+        <div id="usersTable"></div>
+      </div>
       <div class="grid two" style="margin-top:14px">
         <div class="card">
-          <h3>Admin password</h3>
+          <h3>Add a user</h3>
+          <form id="addUserForm" class="form">
+            <label>Name <input name="name" placeholder="Cormac Sweeney" maxlength="100" required></label>
+            <label>Email (their sign-in name) <input name="email" type="email" placeholder="cormac@example.ie" maxlength="200" required></label>
+            <label>Role <select name="role"><option value="user">User — dashboard only</option><option value="admin">Admin — dashboard and this admin area</option></select></label>
+            <label>Initial password (10+ characters) <input name="password" type="password" autocomplete="new-password" minlength="10" required></label>
+            <div class="actions"><button class="btn primary" type="submit">Create account</button></div>
+          </form>
+          <p class="muted small">Tell the person their email and this password; they can change it themselves from the dashboard (Account → Change password).</p>
+        </div>
+        <div class="card">
+          <h3>Admin password (built-in)</h3>
           <form id="passwordForm" class="form">
             <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
             <label>New password (10+ characters) <input name="new" type="password" autocomplete="new-password" minlength="10" required></label>
             <div class="actions"><button class="btn primary" type="submit">Change password</button></div>
           </form>
-          <p class="muted small">Changing it signs every other browser out.</p>
-        </div>
-        <div class="card">
-          <h3>Dashboard password (owner)</h3>
-          <form id="ownerPasswordForm" class="form">
-            <label>New dashboard password (10+ characters) <input name="password" type="password" autocomplete="new-password" minlength="10"></label>
-            <div class="actions"><button class="btn primary" type="submit">Set password</button><button class="btn" type="button" id="ownerPasswordClear">Remove</button></div>
-          </form>
-          <p class="muted small" id="ownerPasswordNote"></p>
+          <p class="muted small">The password created on first run. Changing it signs every browser out, including user accounts.</p>
         </div>
       </div>
     </section>
