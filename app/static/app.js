@@ -68,14 +68,19 @@
   }
 
   // ------------------------------------------------------------ login
+  /** Signed-out state: nothing but the brand and the sign-in box (body.signed-out hides the rest, see styles.css). */
   function showLogin() {
     closeAccount();
+    document.body.classList.add("signed-out");
     $("#authWrap").style.display = "grid";
     $("main").style.display = "none"; $(".filterbar").style.display = "none";
-    $("#accountBtn").style.display = "none"; $("#adminLink").style.display = "none";
+    $("#sourceLine").textContent = "Sign in to continue";
     ($("#authEmail").value ? $("#authPassword") : $("#authEmail")).focus();
   }
-  function hideLogin() { $("#authWrap").style.display = "none"; $("main").style.display = ""; $(".filterbar").style.display = ""; $("#accountBtn").style.display = ""; }
+  function hideLogin() {
+    document.body.classList.remove("signed-out");
+    $("#authWrap").style.display = "none"; $("main").style.display = ""; $(".filterbar").style.display = "";
+  }
   $("#authForm").addEventListener("submit", async (e) => {
     e.preventDefault(); $("#authError").textContent = "";
     try {
@@ -93,7 +98,7 @@
     $("#accountBtn").textContent = me.name || "Account";
     $("#accountName").textContent = me.name || "Account";
     $("#accountMeta").textContent = [me.email, me.role === "admin" ? "administrator" : "dashboard user"].filter(Boolean).join(" · ");
-    $("#adminLink").style.display = me.role === "admin" ? "" : "none";
+    $("#adminLink").classList.toggle("hidden", me.role !== "admin");
     const builtin = !me.uid;  // uid 0 = signed in with the admin password, which has no account row
     $("#accountPasswordForm").style.display = builtin ? "none" : "";
     $("#accountBuiltin").style.display = builtin ? "" : "none";

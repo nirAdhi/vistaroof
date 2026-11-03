@@ -260,6 +260,10 @@ tr.selected td { background: color-mix(in srgb, var(--accent) 12%, transparent);
 /* ---------- upload ---------- */
 .modal.upload { width: min(760px, calc(100% - 24px)); }
 .modal.account { width: min(440px, calc(100% - 24px)); }
+/* signed-out: only the brand and the sign-in card are visible */
+body.signed-out .tabs, body.signed-out #uploadBtn, body.signed-out #syncBtn, body.signed-out #adminLink, body.signed-out #accountBtn,
+body.signed-out .drawer, body.signed-out .modal, body.signed-out .modal-backdrop { display: none !important; }
+.hidden { display: none !important; }
 .users-table td, .users-table th { vertical-align: middle; }
 .users-table .actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .dropzone { position: relative; border: 2px dashed var(--axis); border-radius: 12px; padding: 26px 16px; text-align: center; background: var(--surface-2); }
