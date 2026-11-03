@@ -31,6 +31,7 @@ Debugging tips
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -108,6 +109,11 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         if request.url.path.startswith("/api/"):
             h["Cache-Control"] = "no-store"
+        elif request.url.path.startswith("/static/") or request.url.path in ("/", "/admin"):
+            # Always revalidate pages and assets: after an upgrade a browser must never run an old
+            # app.js against a new admin.html (that combination throws and leaves a blank page).
+            # Assets are also linked with ?v=<content hash>, so a changed file gets a new URL.
+            h["Cache-Control"] = "no-cache"
         return response
 
 
@@ -199,14 +205,31 @@ def _base_url(request: Request) -> str:
 # ====================================================================== pages & health
 
 
+def _asset_version() -> str:
+    """Short hash of the static JS/CSS; substituted into the pages' asset links as ``?v=…`` so browsers
+    fetch fresh copies after every upgrade (and keep caching when nothing changed)."""
+    digest = hashlib.sha256()
+    for name in ("styles.css", "app.js", "admin.js"):
+        digest.update((STATIC / name).read_bytes())
+    return digest.hexdigest()[:12]
+
+
+ASSET_VERSION = _asset_version()
+
+
+def _page(name: str) -> HTMLResponse:
+    html = (STATIC / name).read_text(encoding="utf-8").replace("{{v}}", ASSET_VERSION)
+    return HTMLResponse(html)
+
+
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    return _page("index.html")
 
 
 @app.get("/admin")
 def admin_page():
-    return FileResponse(STATIC / "admin.html")
+    return _page("admin.html")
 
 
 @app.get("/healthz")

@@ -112,6 +112,16 @@ def test_security_headers_present(client):
     assert "strict-transport-security" not in r.headers  # only on https
 
 
+def test_pages_and_assets_are_never_served_stale(client):
+    """An upgraded server must not leave a browser running an old script against a new page."""
+    for path in ("/", "/admin"):
+        r = client.get(path)
+        assert r.headers["cache-control"] == "no-cache"
+        assert f"?v={main.ASSET_VERSION}" in r.text and "{{v}}" not in r.text
+    assert client.get("/static/app.js").headers["cache-control"] == "no-cache"
+    assert len(main.ASSET_VERSION) == 12
+
+
 def test_api_docs_are_disabled(client):
     assert client.get("/docs").status_code == 404 and client.get("/openapi.json").status_code == 404
 
