@@ -140,7 +140,9 @@ sales invoices with status unpaid/partial/overdue/unknown less amount paid; over
   suppliers').
 - FR-26 Google setup: upload/paste the OAuth client JSON once.
 - FR-27 Sync log of every run (trigger, counts, errors) and the current run's failures.
-- FR-28 Data: demo data load/remove, database backup download, delete all documents.
+- FR-28 Data: demo data load/remove, database backup download, delete all documents; document
+  files are not stored on the server unless the admin turns on "keep a copy for faster previews"
+  (`cache_previews`, default off), with a one-click delete of stored copies.
 - FR-29 Users & security: user accounts (create with name/email/role/initial password, rename,
   change role, disable/enable, reset password, remove; self-service password change from the
   dashboard), admin password change (logs other sessions out),

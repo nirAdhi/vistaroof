@@ -21,6 +21,18 @@ Actors: **admin** (full control: the built-in admin password or an account with 
 **anonymous network user**, **a malicious document** placed in a watched Drive, **Google / Anthropic**
 as third parties.
 
+### What the server stores, and what it never touches
+
+- **Stored:** the extracted figures per document (type, amounts, dates, counterparty, summary,
+  the model's JSON) in `documents`; settings; sign-in tokens (encrypted); user accounts (hashed).
+- **Not stored by default:** the document files. Each file is fetched from SharePoint / OneDrive /
+  Drive once for extraction, sent to Claude, and discarded. Opening a preview fetches it again.
+  Admin → Data has an opt-in "keep a copy for faster previews" switch (`cache_previews`); turning
+  it off deletes the copies.
+- **Never changed:** the source folders. Sources connected without the upload option ask only for
+  read scopes (`Files.Read.All`, `Sites.Read.All`), so the token cannot modify, move or delete
+  anything. Corrections made in the app change only the ledger's own rows.
+
 ## 2. Controls in place
 
 ### Authentication and sessions

@@ -71,10 +71,27 @@ def test_preview_endpoint_serves_the_real_file(admin, fresh_db, fake_claude, tmp
     r = admin.get(f"/api/documents/{docs['bill.docx']['id']}/preview")
     assert r.status_code == 200 and "Word bill" in r.text
 
-    # second request is served from the cache even if the folder disappears
+    assert admin.get("/api/documents/999999/preview").status_code == 404
+
+    # Default: nothing is kept on the server, every preview is fetched from the source again
+    from app import previews
+
+    assert previews.stats() == {"enabled": False, "files": 0, "bytes": 0}, previews.stats()
+    (folder / "INV-1.pdf").rename(folder / "INV-1.moved")
+    assert admin.get(f"/api/documents/{docs['INV-1.pdf']['id']}/preview").status_code in (404, 502)  # file gone at the source
+    (folder / "INV-1.moved").rename(folder / "INV-1.pdf")
+
+    # Opt in: copies are kept, so the preview survives the source going away; turning it off deletes them
+    assert admin.put("/api/admin/settings", json={"cache_previews": True}).json()["cache_previews"] == "1"
+    assert admin.get(f"/api/documents/{docs['INV-1.pdf']['id']}/preview").status_code == 200
+    assert previews.stats()["enabled"] and previews.stats()["files"] == 1
     (folder / "INV-1.pdf").unlink()
     assert admin.get(f"/api/documents/{docs['INV-1.pdf']['id']}/preview").content == b"%PDF-1.4 the real invoice"
-    assert admin.get("/api/documents/999999/preview").status_code == 404
+    r = admin.post("/api/admin/previews/clear").json()
+    assert r["removed"] == 1 and r["previews"]["files"] == 0
+    assert admin.get(f"/api/documents/{docs['INV-1.pdf']['id']}/preview").status_code in (404, 502)  # gone from both places now
+    admin.put("/api/admin/settings", json={"cache_previews": False})
+    assert admin.get("/api/admin/overview").json()["previews"] == {"enabled": False, "files": 0, "bytes": 0}
 
 
 def test_preview_for_demo_documents_renders_sample_pages(admin, fresh_db):

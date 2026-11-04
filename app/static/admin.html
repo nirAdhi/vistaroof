@@ -194,7 +194,14 @@
 
     <!-- ===== DATA ===== -->
     <section class="sec" id="sec-data">
-      <div class="sec-head"><h2>Data</h2><div class="muted">Everything is stored locally in <code>data/ledger.db</code>.</div></div>
+      <div class="sec-head"><h2>Data</h2><div class="muted">What this server holds: the extracted figures in <code>data/ledger.db</code>. The documents themselves stay where they are (SharePoint, OneDrive, Google Drive) and are only read, never changed.</div></div>
+      <div class="card" style="margin-bottom:14px">
+        <h3>Document files on this server</h3>
+        <p class="muted small" id="previewsStatus"></p>
+        <label class="check"><input type="checkbox" id="cachePreviews"> Keep a copy of each file for faster previews</label>
+        <p class="muted small">Off (recommended): a preview is fetched from the source every time it is opened and nothing is written to disk. On: the viewable copy is kept under <code>data/previews</code>.</p>
+        <div class="actions"><button class="btn" id="clearPreviews">Delete stored copies</button></div>
+      </div>
       <div class="grid two">
         <div class="card">
           <h3>Demo data</h3>

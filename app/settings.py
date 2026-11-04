@@ -51,7 +51,7 @@ from . import config, crypto, db
 SECRET_KEYS = {"anthropic_api_key", "google_client_config", "ms_client_config", "admin_password_hash", "session_secret"}
 PUBLIC_KEYS = [
     "company_name", "company_address", "company_vat", "base_currency", "country", "extract_model", "extract_effort",
-    "ask_model", "concurrency", "max_file_mb", "auto_sync_minutes",
+    "ask_model", "concurrency", "max_file_mb", "auto_sync_minutes", "cache_previews",
 ]
 ENCRYPTED_KEYS = {"anthropic_api_key", "google_client_config", "ms_client_config"}  # password hashes and the HMAC secret are not secrets of value
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14  # 14 days
@@ -92,6 +92,11 @@ def get(key: str, default: Any = None) -> str:
     if key == "anthropic_api_key" and not looks_like_key(env or ""):
         env = ""  # ignore the ``sk-ant-...`` placeholder from .env.example
     return env if env is not None else (default if default is not None else "")
+
+
+def get_bool(key: str, default: bool = False) -> bool:
+    v = (get(key, "1" if default else "0") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
 
 
 def get_int(key: str, default: int) -> int:

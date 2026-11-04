@@ -392,7 +392,7 @@ def document_preview(doc_id: int, embed: bool = False):
     if row is None:
         raise HTTPException(404, "document not found")
     try:
-        path, mime = previews.get(row)
+        data, mime = previews.get(row)
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc))
     except Exception as exc:
@@ -407,7 +407,7 @@ def document_preview(doc_id: int, embed: bool = False):
     if mime == "text/plain":
         mime = "text/plain; charset=utf-8"
     safe = "".join(ch if ch.isalnum() or ch in "._- " else "_" for ch in (row["name"] or "document"))[:120]
-    return FileResponse(path, media_type=mime, headers={"Content-Disposition": f'inline; filename="{safe}"'})
+    return Response(content=data, media_type=mime, headers={"Content-Disposition": f'inline; filename="{safe}"'})
 
 
 class DocumentPatch(BaseModel):
@@ -701,7 +701,13 @@ def admin_overview() -> dict[str, Any]:
     pub["watch_interval_seconds"] = settings.get_int("watch_interval_seconds", 120)
     return {"settings": pub, "sources": srcs, "sync": sync.status(), "counts": db.status_counts(),
             "demo_loaded": demo.count() > 0, "models": [{"id": m, "label": l} for m, l in extract.MODELS],
-            "production": config.IS_PRODUCTION, "users": db.list_users()}
+            "production": config.IS_PRODUCTION, "users": db.list_users(), "previews": previews.stats()}
+
+
+@app.post("/api/admin/previews/clear", dependencies=[Depends(require_admin)])
+def admin_clear_previews() -> dict[str, Any]:
+    """Delete every stored copy of a document file (they are re-fetched from the source when viewed)."""
+    return {"ok": True, "removed": previews.clear(), "previews": previews.stats()}
 
 
 class SettingsPatch(BaseModel):
@@ -718,11 +724,16 @@ class SettingsPatch(BaseModel):
     auto_sync_minutes: int | None = Field(None, ge=0, le=10080)
     watch_interval_seconds: int | None = Field(None, ge=0, le=86400)
     anthropic_api_key: str | None = Field(None, max_length=300)
+    cache_previews: bool | None = None  # keep viewable copies of files on the server (default off)
 
 
 @app.put("/api/admin/settings", dependencies=[Depends(require_admin)])
 def admin_update_settings(body: SettingsPatch) -> dict[str, Any]:
     changes = body.model_dump(exclude_unset=True)
+    if "cache_previews" in changes:
+        changes["cache_previews"] = "1" if changes["cache_previews"] else "0"
+        if changes["cache_previews"] == "0":
+            previews.clear()  # turning it off also removes what was stored so far
     if "anthropic_api_key" in changes:
         key = (changes["anthropic_api_key"] or "").strip()
         if key and not settings.looks_like_key(key):

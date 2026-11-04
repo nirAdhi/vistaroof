@@ -62,6 +62,7 @@
     renderSecurity(o.settings, o.users || []);
     renderLog(o.sync);
     $("#demoLoad").style.display = o.demo_loaded ? "none" : ""; $("#demoClear").style.display = o.demo_loaded ? "" : "none";
+    renderPreviews(o.previews || { enabled: false, files: 0, bytes: 0 });
     $("#redirectUri").textContent = `${location.origin}/admin/oauth/callback`;
     $("#msRedirectUri").textContent = `${location.origin}/admin/oauth/ms-callback`;
   }
@@ -261,6 +262,15 @@
     const errs = st.recent_errors || [];
     $("#errorsTable").innerHTML = `<h3>Recent file errors</h3>` + (errs.length ? `<ul class="small">${errs.map((e) => `<li><b>${esc(e.file)}</b>: ${esc(e.error)}</li>`).join("")}</ul>` : `<div class="muted small">None in the current / last run. Files with a stored error are listed on the owner dashboard under Documents → Error.</div>`);
   }
+  /** Data → document files kept on this server (off by default: nothing but the figures is stored). */
+  function renderPreviews(p) {
+    const mb = (p.bytes / 1048576).toFixed(1);
+    $("#previewsStatus").textContent = p.files ? `${p.files} file cop${p.files === 1 ? "y" : "ies"} stored (${mb} MB).` : "No document files are stored on this server.";
+    $("#cachePreviews").checked = !!p.enabled;
+    $("#clearPreviews").style.display = p.files ? "" : "none";
+  }
+  $("#cachePreviews").addEventListener("change", (e) => run(api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ cache_previews: e.target.checked }) }), e.target.checked ? "Copies will be kept from now on" : "Copies disabled and deleted"));
+  $("#clearPreviews").addEventListener("click", () => run(api("/api/admin/previews/clear", { method: "POST" }), "Stored copies deleted"));
   $("#demoLoad").addEventListener("click", () => run(api("/api/admin/demo/load", { method: "POST" }), "Demo data loaded"));
   $("#demoClear").addEventListener("click", () => run(api("/api/admin/demo/clear", { method: "POST" }), "Demo data removed"));
   $("#clearDocs").addEventListener("click", () => { if (confirm("Delete ALL extracted documents and sync history? This cannot be undone.")) run(api("/api/admin/clear-documents", { method: "POST" }), "All documents deleted"); });

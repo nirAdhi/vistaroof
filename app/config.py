@@ -65,4 +65,7 @@ ENV_DEFAULTS = {
     "concurrency": os.getenv("CONCURRENCY", "3"),
     "max_file_mb": os.getenv("MAX_FILE_MB", "25"),
     "auto_sync_minutes": os.getenv("AUTO_SYNC_MINUTES", "0"),
+    # "1" keeps a viewable copy of each file under DATA_DIR/previews for faster previews; "0" (default)
+    # streams the file from its source every time, so no document content is stored on the server.
+    "cache_previews": os.getenv("CACHE_PREVIEWS", "0"),
 }

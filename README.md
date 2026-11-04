@@ -33,6 +33,10 @@ Admin login: either create the password in the browser on first visit, or put `A
 Forgot a browser-created password? `.venv\Scripts\python -m app.reset_admin` (Docker:
 `docker compose exec app python -m app.reset_admin`) clears it; `/admin` then asks for a new one.
 
+Read-only by design: documents stay in SharePoint / OneDrive / Drive and are only read; the server
+keeps the extracted figures, not the files (an opt-in switch under Admin → Data keeps copies for
+faster previews). Untick "Allow uploads" on a source and the app never asks for write access.
+
 The dashboard ships with demo data (including generated sample pages for previews) so it can be
 explored before anything is connected.
 
