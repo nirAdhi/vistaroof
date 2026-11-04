@@ -192,7 +192,7 @@ top of `app/db.py`.
 | POST /api/sync · GET /api/sync/status | owner | sync |
 | GET /api/upload/targets · POST /api/upload (multipart) | owner | upload |
 | POST /api/ask | owner | questions |
-| /api/admin/* (settings, test-key, google-client, ms-client, sources, sync, watch-now, runs, backup, demo, passwords) | admin | administration |
+| /api/admin/* (settings, test-key, google-client, ms-client, sources, sync, sync-stop, watch-now, runs, backup, demo, passwords) | admin | administration |
 | GET /admin/sources/{id}/connect → Google → GET /admin/oauth/callback | admin | Google OAuth |
 | GET /admin/sources/{id}/connect → Microsoft → GET /admin/oauth/ms-callback | admin | Microsoft OAuth (PKCE) |
 | GET /healthz | none | health |

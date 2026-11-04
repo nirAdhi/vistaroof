@@ -59,7 +59,7 @@ import logging
 import secrets
 import time
 from typing import Any, Iterator
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -278,6 +278,50 @@ def encode_share_url(url: str) -> str:
     return "u!" + base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
 
 
+_ITEM_FIELDS = {"$select": "id,name,folder,webUrl,parentReference"}
+
+
+def _share_item(graph: Graph, url: str) -> dict[str, Any]:
+    try:
+        return graph.get(f"/shares/{encode_share_url(url)}/driveItem", params=_ITEM_FIELDS)
+    except GraphError as exc:
+        if exc.status in (403, 404):
+            raise RuntimeError("That link is not visible to the signed-in account. In SharePoint use Share → Copy link, "
+                               "shared with this person, and make sure the account has at least view access.") from exc
+        raise
+
+
+def _resolve_url(graph: Graph, link: str) -> dict[str, Any]:
+    """A pasted URL → driveItem.
+
+    Two shapes arrive here: a Share → Copy link URL (``/:f:/s/Site/…``), which Graph resolves directly,
+    and the browser address of a folder (``…/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2F…%2FInvoices``).
+    The second resolves to the *library root* on its own — the folder is only named in the ``id`` query
+    parameter — so the library is resolved first and the folder path walked from its root. Without
+    this, a pasted address silently meant "the whole library"."""
+    parts = urlsplit(link)
+    folder_path = unquote(parse_qs(parts.query).get("id", [""])[0]).rstrip("/")
+    if not folder_path:
+        return _share_item(graph, link)
+    root = _share_item(graph, urlunsplit((parts.scheme, parts.netloc, parts.path, "", "")))
+    drive_id = root["parentReference"]["driveId"]
+    drive = graph.get(f"/drives/{drive_id}", params={"$select": "name,webUrl,driveType"})
+    lib_path = unquote(urlsplit(drive.get("webUrl") or "").path).rstrip("/")
+    if lib_path and folder_path.lower() == lib_path.lower():
+        return root
+    if lib_path and folder_path.lower().startswith(lib_path.lower() + "/"):
+        rel = folder_path[len(lib_path):].strip("/")
+        try:
+            return graph.get(f"/drives/{drive_id}/root:/{quote(rel, safe='/')}", params=_ITEM_FIELDS)
+        except GraphError as exc:
+            if exc.status == 404:
+                raise RuntimeError(f"The folder '{rel}' was not found in that library (it may have been moved or renamed). "
+                                   "Open the folder in SharePoint and use Share → Copy link.") from exc
+            raise
+    # the id points outside the library of the page (unusual): try the folder's own address
+    return _share_item(graph, urlunsplit((parts.scheme, parts.netloc, quote(folder_path, safe="/"), "", "")))
+
+
 def resolve_link(graph: Graph, link: str) -> dict[str, Any]:
     """Turn a pasted link (or ``drive_id:item_id``) into {"drive_id", "item_id", "label", "web_url"}."""
     link = link.strip()
@@ -285,15 +329,9 @@ def resolve_link(graph: Graph, link: str) -> dict[str, Any]:
         return {"mode": "shared", "label": "Shared with me"}
     if "://" not in link and ":" in link:
         drive_id, item_id = link.split(":", 1)
-        item = graph.get(f"/drives/{drive_id}/items/{item_id}", params={"$select": "id,name,folder,webUrl,parentReference"})
+        item = graph.get(f"/drives/{drive_id}/items/{item_id}", params=_ITEM_FIELDS)
     else:
-        try:
-            item = graph.get(f"/shares/{encode_share_url(link)}/driveItem", params={"$select": "id,name,folder,webUrl,parentReference"})
-        except GraphError as exc:
-            if exc.status in (403, 404):
-                raise RuntimeError("That link is not visible to the signed-in account. In SharePoint use Share → Copy link, "
-                                   "shared with this person, and make sure the account has at least view access.") from exc
-            raise
+        item = _resolve_url(graph, link)
     if "folder" not in item:
         raise RuntimeError("The link points to a file; paste a link to a folder (or a document library).")
     drive_id = item["parentReference"]["driveId"]

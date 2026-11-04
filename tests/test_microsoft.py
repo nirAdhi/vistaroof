@@ -128,6 +128,32 @@ def test_ms_link_not_visible_to_account(admin, fresh_db, fake_claude, monkeypatc
     assert admin.patch(f"/api/admin/sources/{src['id']}", json={"ms_link": "https://vistaroofing.sharepoint.com/:f:/s/Other/Still"}).status_code == 400
 
 
+def test_ms_browser_address_of_a_folder_means_that_folder(admin, fresh_db, fake_claude, monkeypatch):
+    """The address bar URL of a SharePoint folder (…/Forms/AllItems.aspx?id=…) names the folder only in ``id``;
+    the page itself resolves to the library root, which once made a pasted address mean the whole library."""
+    fake = sharepoint_fixture()
+    fake.add_folder("drv1", "root", "ah", "Accounts & HR")
+    fake.add_folder("drv1", "ah", "vat", "VAT Claim & Invoices")
+    fake.add_folder("drv1", "vat", "inv2", "Invoices")
+    fake.add_file("drv1", "inv2", "f8", "INV-2201 Byrne.pdf", "application/pdf", b"%PDF-1.4 inv 2201")
+    page = "https://vistaroofing.sharepoint.com/sites/HRAccounts/Shared%20Documents/Forms/AllItems.aspx"
+    fake.share(page, "drv1", "root")
+    install_fake_graph(monkeypatch, fake)
+    _register(admin)
+    url = page + "?id=%2Fsites%2FHRAccounts%2FShared%20Documents%2FAccounts%20%26%20HR%2FVAT%20Claim%20%26%20Invoices%2FInvoices&viewid=ab-12"
+    src = admin.post("/api/admin/sources", json={"kind": "m365", "name": "Invoices", "ms_link": url, "ms_upload": False}).json()
+    _connect(admin, fake, src["id"]); wait_sync()
+    s = admin.get("/api/admin/sources").json()[0]
+    loc = json.loads(s["ms_location"])
+    assert loc["item_id"] == "inv2" and loc["label"] == "HRAccounts/Invoices", loc
+    assert [d["name"] for d in admin.get("/api/documents").json()] == ["INV-2201 Byrne.pdf"]  # that folder only, not the library
+    # a folder that no longer exists gives a clear message; the library address without id still means the library
+    r = admin.patch(f"/api/admin/sources/{src['id']}", json={"ms_link": page + "?id=%2Fsites%2FHRAccounts%2FShared%20Documents%2FGone"})
+    assert r.status_code == 400 and "not found in that library" in r.json()["detail"]
+    r = admin.patch(f"/api/admin/sources/{src['id']}", json={"ms_link": page})
+    assert r.status_code == 200 and json.loads(r.json()["ms_location"])["item_id"] == "root"
+
+
 # ------------------------------------------------------------------ watcher (delta)
 
 

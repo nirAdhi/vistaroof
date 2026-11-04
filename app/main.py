@@ -956,7 +956,7 @@ def admin_delete_source(source_id: int) -> dict[str, Any]:
     if db.get_source(source_id) is None:
         raise HTTPException(404, "source not found")
     if sync.status()["running"]:
-        raise HTTPException(409, "wait for the current sync to finish before removing a source")
+        raise HTTPException(409, "a sync is running: press Stop (or wait for it to finish) before removing a source")
     return {"ok": True, "documents_removed": db.delete_source(source_id)}
 
 
@@ -975,6 +975,12 @@ def admin_sync_source(source_id: int, force: bool = False) -> dict[str, Any]:
 def admin_sync_all(force: bool = False) -> dict[str, Any]:
     _require_api_key()
     return {"started": sync.start(force=force, trigger="manual"), "status": sync.status()}
+
+
+@app.post("/api/admin/sync-stop", dependencies=[Depends(require_admin)])
+def admin_sync_stop() -> dict[str, Any]:
+    """Stop the running sync after the files being read now. Nothing already stored is lost."""
+    return {"stopped": sync.stop(), "status": sync.status()}
 
 
 @app.post("/api/admin/watch-now", dependencies=[Depends(require_admin)])

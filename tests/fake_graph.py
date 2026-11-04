@@ -117,12 +117,14 @@ class FakeGraph:
             return self._err(404, "itemNotFound", "drive not found")
         if rest == "":
             return httpx.Response(200, json=self.drives.get(drive_id, {"id": drive_id, "webUrl": ""}))
-        if rest.startswith("/root:/"):
-            name = rest[len("/root:/"):]
-            for cid in self.children.get((drive_id, "root"), []):
-                if self.items[drive_id][cid]["name"] == name:
-                    return httpx.Response(200, json=self.items[drive_id][cid])
-            return self._err(404, "itemNotFound", "no such path")
+        if rest.startswith("/root:/"):  # path addressing: /root:/A/B/C
+            cur = "root"
+            for name in rest[len("/root:/"):].strip("/").split("/"):
+                nxt = next((cid for cid in self.children.get((drive_id, cur), []) if self.items[drive_id][cid]["name"] == name), None)
+                if nxt is None:
+                    return self._err(404, "itemNotFound", "no such path")
+                cur = nxt
+            return httpx.Response(200, json=self.items[drive_id][cur])
         im = re.match(r"^/items/([^/:]+)(.*)$", rest)
         if not im:
             return httpx.Response(404, text=f"unknown path {p}")

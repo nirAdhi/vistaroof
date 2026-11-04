@@ -99,18 +99,20 @@
       <div class="strip-row">
         <div><b>${st.running ? esc(st.message || "Syncing…") : "Sync idle"}</b>${st.running && st.current_file ? ` <span class="muted">— ${esc(st.current_file)}</span>` : ""}${!st.running && st.last_finished_at ? ` <span class="muted">— last finished ${when(st.last_finished_at)}</span>` : ""}</div>
         <div class="muted small">${Object.entries(c).map(([k, v]) => `${label(k)}: ${v}`).join(" · ") || "no documents yet"}</div>
-        <div class="actions"><button class="btn primary sm" id="syncAllBtn" ${st.running || !s.has_api_key ? "disabled" : ""}>Sync all sources</button> <button class="btn sm" id="watchNowBtn" ${st.running || !s.has_api_key ? "disabled" : ""} title="Ask SharePoint / Google Drive for changes right now">Check for changes</button></div>
+        <div class="actions"><button class="btn primary sm" id="syncAllBtn" ${st.running || !s.has_api_key ? "disabled" : ""}>Sync all sources</button> <button class="btn sm" id="watchNowBtn" ${st.running || !s.has_api_key ? "disabled" : ""} title="Ask SharePoint / Google Drive for changes right now">Check for changes</button>${st.running ? ` <button class="btn sm" id="stopSyncBtn" ${st.stop_requested ? "disabled" : ""} title="Finish the files being read now, then stop. Nothing already read is lost.">${st.stop_requested ? "Stopping…" : "Stop"}</button>` : ""}</div>
       </div>
       ${st.running ? `<div class="progress"><i style="width:${pct}%"></i></div><div class="muted small">${done} of ${total} files · read ${st.processed} · unchanged/skipped ${st.skipped} · errors ${st.errors}${st.queue && st.queue.length ? ` · waiting: ${st.queue.map(esc).join(", ")}` : ""}</div>` : ""}
       ${warn.length ? `<ul class="warnlist">${warn.map((w) => `<li>${w}</li>`).join("")}</ul>` : ""}`;
     $("#syncAllBtn").addEventListener("click", () => run(api("/api/admin/sync-all", { method: "POST" }), "Sync started"));
     $("#watchNowBtn").addEventListener("click", () => run(api("/api/admin/watch-now", { method: "POST" }).then((r) => toast(r.changed_sources.length ? `Changes found in ${r.changed_sources.length} source(s), sync started` : "No changes since the last check")), null));
+    const stopBtn = $("#stopSyncBtn");
+    if (stopBtn) stopBtn.addEventListener("click", () => run(api("/api/admin/sync-stop", { method: "POST" }), "Stopping after the files being read now"));
     $$("#statusStrip [data-go]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); showSection(a.dataset.go); }));
     $("#adminSub").textContent = st.running ? `Syncing ${pct}%` : whoAmI();
   }
 
   function statusBadge(src) {
-    const map = { ok: ["good", "OK"], errors: ["serious", "Finished with errors"], failed: ["critical", "Failed"], syncing: ["accent", "Syncing"],
+    const map = { ok: ["good", "OK"], errors: ["serious", "Finished with errors"], failed: ["critical", "Failed"], syncing: ["accent", "Syncing"], stopped: ["warning", "Stopped"],
       connected: ["good", "Connected"], not_connected: ["warning", "Not connected"], ready: ["good", "Ready"] };
     const [cls, text] = map[src.last_status] || ["muted", label(src.last_status || "new")];
     return `<span class="badge ${cls}">${text}</span>`;

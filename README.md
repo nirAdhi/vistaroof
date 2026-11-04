@@ -53,7 +53,7 @@ docker compose up -d --build
 ## Development
 
 ```
-.venv\Scripts\python -m pytest tests        # 43 tests, no network (fake Claude, fake Drive, fake Microsoft Graph)
+.venv\Scripts\python -m pytest tests        # 55 tests, no network (fake Claude, fake Drive, fake Microsoft Graph)
 .venv\Scripts\python -m pip_audit           # dependency vulnerabilities
 .venv\Scripts\python -m bandit -r app -ll   # static analysis
 ```

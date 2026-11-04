@@ -12,7 +12,8 @@ Three ways a sync starts
 
 Only one sync runs at a time (``_state["running"]``). Requests that arrive meanwhile are queued in
 ``_rerun`` and run when the current one finishes. Progress is in ``_state`` and served by
-``status()`` for the UI.
+``status()`` for the UI. ``stop()`` (Admin → Stop) ends the run after the files in flight: the run
+and the source are marked ``stopped``, nothing stored is lost, unread files wait for the next sync.
 
 Per file: ``_process_one()`` → metadata upsert → skip if unchanged / hand-edited → download →
 ``extract.extract()`` → ``db.save_extraction()``. Any exception is recorded on the document
@@ -41,7 +42,7 @@ _lock = threading.Lock()
 _state: dict[str, Any] = {
     "running": False, "phase": "idle", "message": "", "trigger": None, "current_source": None, "current_file": None,
     "queue": [], "total": 0, "processed": 0, "skipped": 0, "errors": 0, "removed": 0, "recent_errors": [],
-    "last_finished_at": None, "last_watch_at": None,
+    "last_finished_at": None, "last_watch_at": None, "stop_requested": False,
 }
 _rerun: dict[int | None, bool] = {}  # source id -> force; None = all enabled sources
 
@@ -94,7 +95,7 @@ def start(source_ids: list[int] | None = None, force: bool = False, wait: bool =
         _state.update({
             "running": True, "phase": "starting", "message": "Starting…", "trigger": trigger, "current_source": None,
             "current_file": None, "queue": [s["name"] for s in sources], "total": 0, "processed": 0, "skipped": 0, "errors": 0,
-            "removed": 0, "recent_errors": [],
+            "removed": 0, "recent_errors": [], "stop_requested": False,
         })
     if not sources:
         _set(running=False, phase="done", message="Nothing to sync: no enabled sources", last_finished_at=db.now_iso())
@@ -106,18 +107,35 @@ def start(source_ids: list[int] | None = None, force: bool = False, wait: bool =
     return True
 
 
+def stop() -> bool:
+    """Ask the running sync to stop once the files being read right now are finished.
+
+    Everything stored so far stays; files not reached are read by the next sync. Requests queued
+    behind the run are dropped too (the admin pressed Stop for a reason). Returns False when idle."""
+    with _lock:
+        if not _state["running"]:
+            return False
+        _state["stop_requested"] = True
+        _state["message"] = "Stopping after the files being read now…"
+        _rerun.clear()
+    log.info("sync stop requested")
+    return True
+
+
 def _run_all(sources: list[dict[str, Any]], force: bool, trigger: str) -> None:
     try:
         for src in sources:
+            if _state["stop_requested"]:
+                break
             with _lock:
                 _state["queue"] = [n for n in _state["queue"] if n != src["name"]]
             _run_source(src, force, trigger)
-        _set(phase="done", message="Sync complete", current_source=None, current_file=None)
+        _set(phase="done", message="Sync stopped" if _state["stop_requested"] else "Sync complete", current_source=None, current_file=None)
     except Exception as exc:  # pragma: no cover - defensive
         _set(phase="failed", message=f"Sync failed: {exc}")
         log.exception("sync failed")
     finally:
-        _set(running=False, last_finished_at=db.now_iso())
+        _set(running=False, last_finished_at=db.now_iso(), stop_requested=False)  # uploads reuse _process_one: never leave the flag set
         _drain_rerun()
 
 
@@ -149,6 +167,8 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
         with ThreadPoolExecutor(max_workers=max(1, settings.get_int("concurrency", 3))) as pool:
             futures = {pool.submit(_process_one, source, meta, force): meta for meta in files}
             for fut in as_completed(futures):
+                if fut.cancelled():
+                    continue
                 meta = futures[fut]
                 try:
                     fut.result()
@@ -158,6 +178,17 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
                     run_id, processed=_state["processed"] - base["processed"], skipped=_state["skipped"] - base["skipped"],
                     errors=_state["errors"] - base["errors"],
                 )
+                if _state["stop_requested"]:
+                    for f in futures:
+                        f.cancel()  # files not started yet; the ones in flight finish normally
+                    break
+        if _state["stop_requested"]:  # the pool has drained: count the files that were in flight too
+            db.update_run(run_id, finished_at=db.now_iso(), status="stopped", message="stopped by the admin",
+                          processed=_state["processed"] - base["processed"], skipped=_state["skipped"] - base["skipped"],
+                          errors=_state["errors"] - base["errors"])
+            db.update_source(src["id"], last_sync_at=db.now_iso(), last_status="stopped", last_error=None)
+            log.info("%s: sync stopped by the admin after %d file(s)", src["name"], _state["processed"] - base["processed"])
+            return
         removed = db.mark_missing(src["id"], {m.source_id for m in files})
         if removed:
             _bump("removed", removed)
@@ -176,6 +207,8 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
 
 def _process_one(source, meta: FileMeta, force: bool) -> str:
     """Read one file if needed. Returns the resulting status."""
+    if _state["stop_requested"]:
+        return "stopped"  # not even recorded: the next sync sees it as a new file
     doc_id = db.upsert_file_metadata(meta.as_dict())
     if not db.needs_processing(doc_id, force=force):
         _bump("skipped")
