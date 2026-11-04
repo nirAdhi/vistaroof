@@ -270,12 +270,23 @@ def client() -> anthropic.Anthropic:
 
 
 def test_api_key(key: str, model: str | None = None) -> dict[str, Any]:
-    """Cheap connectivity check: look the chosen model up with the given key."""
+    """Connectivity check: look the chosen model up, then send the smallest possible request.
+
+    The model lookup proves the key is valid; only a real message request also proves the account
+    has credit, which is the failure that otherwise shows up only once a sync runs."""
     model = model or settings.get("extract_model")
     try:
         c = anthropic.Anthropic(api_key=key, max_retries=1, timeout=30)
         m = c.models.retrieve(model)
-        return {"ok": True, "message": f"Key works. Model available: {getattr(m, 'display_name', model)}"}
+        name = getattr(m, "display_name", model)
+        try:
+            c.messages.create(model=model, max_tokens=5, messages=[{"role": "user", "content": "Reply with OK."}])
+        except anthropic.BadRequestError as exc:
+            if "credit balance" in str(exc.message).lower():
+                return {"ok": False, "message": f"The key is valid but the Anthropic account has no credit: nothing can be read until "
+                                                f"credit is added under Plans & Billing at console.anthropic.com. ({name})"}
+            # any other 400 means the key and billing were accepted and only this probe request was odd
+        return {"ok": True, "message": f"Key works and the account has credit. Model available: {name}"}
     except anthropic.AuthenticationError:
         return {"ok": False, "message": "Authentication failed: the key is not valid."}
     except anthropic.PermissionDeniedError:

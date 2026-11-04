@@ -65,12 +65,29 @@ def test_test_key_endpoint(admin, monkeypatch):
             resp = httpx2.Response(404, request=httpx2.Request("GET", "https://api.anthropic.com/v1/models/x"))
             raise anthropic.NotFoundError(message="nope", response=resp, body=None)
 
-    monkeypatch.setattr(extract.anthropic, "Anthropic", lambda **kw: SimpleNamespace(models=FakeModels()))
+    class FakeMessages:
+        broke = False
+
+        def create(self, **kw):
+            assert kw["max_tokens"] <= 5  # the probe must stay (almost) free
+            if self.broke:
+                import anthropic
+                import httpx2
+                resp = httpx2.Response(400, request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages"))
+                raise anthropic.BadRequestError(message="Your credit balance is too low to access the Anthropic API.", response=resp, body=None)
+            return SimpleNamespace(content=[])
+
+    messages = FakeMessages()
+    monkeypatch.setattr(extract.anthropic, "Anthropic", lambda **kw: SimpleNamespace(models=FakeModels(), messages=messages))
     assert admin.post("/api/admin/test-key", json={"key": "short"}).json()["ok"] is False
     r = admin.post("/api/admin/test-key", json={"key": FAKE_KEY, "model": "claude-opus-5-5"}).json()
-    assert r["ok"] is True and "Opus" in r["message"]
+    assert r["ok"] is True and "Opus" in r["message"] and "credit" in r["message"]
     r = admin.post("/api/admin/test-key", json={"key": FAKE_KEY, "model": "claude-nope"}).json()
     assert r["ok"] is False and "not found" in r["message"]
+    # a valid key on an account without credit is reported as such, not as "works"
+    messages.broke = True
+    r = admin.post("/api/admin/test-key", json={"key": FAKE_KEY, "model": "claude-opus-5-5"}).json()
+    assert r["ok"] is False and "no credit" in r["message"]
 
 
 def test_google_client_upload(admin, fresh_db):
