@@ -21,6 +21,8 @@ os.environ["DB_PATH"] = str(Path(_TMP) / "test.db")
 os.environ["ANTHROPIC_API_KEY"] = ""
 os.environ.pop("APP_SECRET_KEY", None)
 os.environ.pop("PUBLIC_BASE_URL", None)
+os.environ["ADMIN_EMAIL"] = ""  # explicit empty: the developer's .env / .env.production admin login must not leak into the tests
+os.environ["ADMIN_PASSWORD"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient  # noqa: E402

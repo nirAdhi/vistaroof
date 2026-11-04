@@ -96,7 +96,7 @@ def test_reset_admin_command(admin, fresh_db, capsys):
     user = login_as(u["email"])
     reset_admin.main()
     assert "admin password cleared" in capsys.readouterr().out
-    assert admin.get("/api/admin/me").json() == {"authenticated": False, "role": None, "user": None, "needs_setup": True}
+    assert admin.get("/api/admin/me").json() == {"authenticated": False, "role": None, "user": None, "needs_setup": True, "email_required": False}
     assert user.get("/api/summary").status_code == 401  # everyone is logged out
     assert client_setup_works(admin)
 
@@ -123,7 +123,11 @@ def test_admin_login_from_environment(client, fresh_db, monkeypatch, capsys):
         assert client.post("/api/admin/login", json={"password": ADMIN_PW}).status_code == 401  # old one is gone
         r = client.post("/api/admin/login", json={"email": "Boss@VistaRoofing.ie", "password": "env-admin-pass-123"})
         assert r.status_code == 200 and r.json()["user"] == {"role": "admin", "uid": 0, "name": "Admin", "email": "boss@vistaroofing.ie"}
-        assert client.post("/api/auth/login", json={"email": "", "password": "env-admin-pass-123"}).status_code == 200  # empty email still works
+        # with ADMIN_EMAIL set, the email is required: an empty email no longer signs the admin in
+        assert client.post("/api/auth/login", json={"email": "", "password": "env-admin-pass-123"}).status_code == 401
+        assert client.post("/api/admin/login", json={"password": "env-admin-pass-123"}).status_code == 401
+        assert client.get("/api/auth/me").json()["email_required"] is True
+        assert client.get("/api/admin/me").json()["email_required"] is True
         # cannot be changed from the UI, and the reset command refuses too
         assert client.post("/api/admin/password", json={"current": "env-admin-pass-123", "new": "another-pass-12"}).status_code == 400
         assert client.get("/api/admin/overview").json()["settings"]["admin_from_env"] is True
@@ -140,7 +144,9 @@ def test_admin_login_from_environment(client, fresh_db, monkeypatch, capsys):
 
 
 def test_login_box_accepts_password_only_for_admin(client, fresh_db):
+    """Without ADMIN_EMAIL nothing else can name the admin, so the empty email + password still works."""
     client.cookies.clear()
+    assert client.get("/api/auth/me").json()["email_required"] is False
     assert client.post("/api/auth/login", json={"password": ADMIN_PW}).json()["role"] == "admin"
     assert client.post("/api/auth/login", json={"email": "", "password": "wrong-password-x"}).status_code == 401
     assert client.post("/api/auth/login", json={"email": "ghost@example.ie", "password": ADMIN_PW}).status_code == 401

@@ -28,7 +28,7 @@
     <h2 id="authTitle">Admin login</h2>
     <p class="muted" id="authHint"></p>
     <form id="authForm">
-      <input type="email" id="authEmail" placeholder="Email (leave empty for the admin password)" autocomplete="username" inputmode="email">
+      <input type="email" id="authEmail" placeholder="Email" autocomplete="username" inputmode="email">
       <input type="password" id="authPassword" placeholder="Password" autocomplete="current-password" required>
       <input type="password" id="authPassword2" placeholder="Repeat password" autocomplete="new-password" style="display:none">
       <button class="btn primary" type="submit" id="authSubmit">Log in</button>
@@ -223,7 +223,7 @@
 
     <!-- ===== SECURITY ===== -->
     <section class="sec" id="sec-security">
-      <div class="sec-head"><h2>Security &amp; users</h2><div class="muted">Everyone who uses the ledger gets their own account (email + password). <b>Users</b> see the dashboard: figures, documents, uploads, questions. <b>Admins</b> also open this area. The built-in admin password stays as a fallback login with the email left empty.</div></div>
+      <div class="sec-head"><h2>Security &amp; users</h2><div class="muted">Everyone who uses the ledger gets their own account (email + password). <b>Users</b> see the dashboard: figures, documents, uploads, questions. <b>Admins</b> also open this area. The built-in admin password stays as a fallback login: its sign-in name is <code>ADMIN_EMAIL</code> from the server environment (with no <code>ADMIN_EMAIL</code>, the email is left empty).</div></div>
       <div class="card" id="securityStatus"></div>
       <div class="card" style="margin-top:14px">
         <h3>User accounts</h3>

@@ -1,4 +1,5 @@
-"""Process-level configuration read from environment variables (and an optional ``.env`` file).
+"""Process-level configuration read from environment variables (and an optional ``.env`` file;
+``ADMIN_EMAIL`` / ``ADMIN_PASSWORD`` are also taken from ``.env.production`` when not set elsewhere).
 
 Only things that must be known before the database is open live here: file paths, the listening
 address, and production switches. Everything else is in the ``settings`` table (see ``settings.py``).
@@ -20,7 +21,8 @@ LOG_DIR           Folder for rotating log files (default ``<DATA_DIR>/logs``).
 ADMIN_PASSWORD    Built-in admin password, applied at every start (10+ characters). When set, the
                   first-run "create the admin password" screen is skipped and the password cannot be
                   changed from the UI: edit the file and restart instead.
-ADMIN_EMAIL       Optional sign-in name for that admin (otherwise the email field is left empty).
+ADMIN_EMAIL       Sign-in name for that admin; when set, the login boxes require it and an empty
+                  email is refused. Without it the admin signs in with the email field left empty.
 COMPANY_NAME etc. Initial defaults for settings, used only until changed in Admin.
 """
 from __future__ import annotations
@@ -28,10 +30,17 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / ".env")  # real environment variables win (Docker passes .env.production through env_file)
+# A local run also takes the admin login from .env.production, so the same email + password work on
+# the PC and on the server. Only these two keys: the rest of that file (public URL, LOCAL_ROOTS…)
+# describes the server and would break a localhost run.
+_PROD = dotenv_values(ROOT / ".env.production") if (ROOT / ".env.production").exists() else {}
+for _k in ("ADMIN_EMAIL", "ADMIN_PASSWORD"):
+    if _k not in os.environ and _PROD.get(_k):  # an explicit empty value (tests) opts out
+        os.environ[_k] = _PROD[_k]
 
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)

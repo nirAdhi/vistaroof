@@ -37,7 +37,7 @@ security*; they sign in at `https://<your domain>/` with their email and passwor
 **Admin login.** The simplest option is to put it in `.env.production`:
 
 ```
-ADMIN_EMAIL=you@example.com     # sign-in name (an empty email also works)
+ADMIN_EMAIL=you@example.com     # sign-in name; required at login once set
 ADMIN_PASSWORD=<10+ characters>
 ```
 

@@ -183,7 +183,7 @@ top of `app/db.py`.
 
 | Method & path | Role | Purpose |
 |---|---|---|
-| GET /api/auth/me · POST /api/auth/login · POST /api/auth/logout · POST /api/auth/password | any | login (email + password, or admin password with empty email), own password change |
+| GET /api/auth/me · POST /api/auth/login · POST /api/auth/logout · POST /api/auth/password | any | login (email + password; the built-in admin uses `ADMIN_EMAIL`, or an empty email when none is configured), own password change |
 | GET/POST /api/admin/users · PATCH/DELETE /api/admin/users/{id} · POST /api/admin/users/{id}/password | admin | user accounts |
 | GET /api/config, /api/meta, /api/version | owner | UI bootstrap, live-refresh marker |
 | GET /api/summary?from&to · GET /api/companies | owner | aggregates |

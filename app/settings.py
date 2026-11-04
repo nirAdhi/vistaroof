@@ -22,7 +22,8 @@ Who can sign in
 * The built-in **admin password** (``admin_password_hash``): created on first run, or taken from
   ``ADMIN_PASSWORD`` in the environment at every start (``apply_env_admin()``), ``uid`` 0. It is
   the break-glass login and the only one that exists before any account is created. With
-  ``ADMIN_EMAIL`` set, that email + password also signs the built-in admin in.
+  ``ADMIN_EMAIL`` set, that email is the admin's sign-in name and an empty email is refused;
+  without it the admin signs in with the email field left empty.
 * **User accounts** (``users`` table, see db.py): name, email, password, role ``user`` (dashboard
   only) or ``admin`` (dashboard + admin area). Their tokens carry the user id and the user's
   ``token_version``; ``resolve_session()`` checks both against the table on every request so a
@@ -189,6 +190,7 @@ def public() -> dict[str, Any]:
     out["has_admin_password"] = bool(get("admin_password_hash"))
     out["admin_from_env"] = admin_from_env()
     out["admin_email"] = config.ADMIN_EMAIL
+    out["email_required"] = bool(config.ADMIN_EMAIL)  # login boxes: no "leave empty" fallback
     out["user_count"] = db.count_users()
     out["secrets_encrypted"] = crypto.is_enabled()
     out["public_base_url"] = config.PUBLIC_BASE_URL
@@ -285,13 +287,14 @@ def identity_for_user(user: dict[str, Any]) -> Identity:
 def authenticate(email: str, password: str) -> Identity | None:
     """The one login check behind both login boxes.
 
-    * empty email (or the email given as ADMIN_EMAIL) -> the built-in admin password;
+    * the built-in admin password: with ``ADMIN_EMAIL`` set, only that email + password; without
+      it, an empty email + password (nothing else can identify the admin then);
     * otherwise the user account with that email, which must be active.
     Returns None on any failure (callers answer a uniform 401)."""
     email = (email or "").strip().lower()
-    if not email or (config.ADMIN_EMAIL and email == config.ADMIN_EMAIL):
+    if email == config.ADMIN_EMAIL:  # both empty (no ADMIN_EMAIL configured) or the configured name
         return Identity.builtin_admin() if check_password(password, "admin") else None
-    user = db.get_user_by_email(email)
+    user = db.get_user_by_email(email) if email else None
     if user is None or not user.get("active"):
         # still burn the same time as a real check so email enumeration by timing is harder
         _hash_password(password, "00" * 16)

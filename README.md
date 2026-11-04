@@ -29,7 +29,8 @@ Documentation:
    else who should see the ledger. Admin → Data: remove demo data.
 
 Admin login: either create the password in the browser on first visit, or put `ADMIN_EMAIL` and
-`ADMIN_PASSWORD` in `.env` (`.env.production` in Docker) and the app takes them at every start.
+`ADMIN_PASSWORD` in `.env.production` (or `.env`) and the app takes them at every start; the admin
+then signs in with exactly that email and password.
 Forgot a browser-created password? `.venv\Scripts\python -m app.reset_admin` (Docker:
 `docker compose exec app python -m app.reset_admin`) clears it; `/admin` then asks for a new one.
 

@@ -257,7 +257,7 @@ class Password(BaseModel):
 
 
 class Login(BaseModel):
-    """Email + password of a user account; an empty email means the built-in admin password."""
+    """Email + password of a user account or of the built-in admin (empty email only when no ADMIN_EMAIL is set)."""
 
     email: str = Field("", max_length=200)
     password: str = Field(min_length=1, max_length=200)
@@ -278,12 +278,12 @@ def _login(body: Login, request: Request) -> settings.Identity:
 def auth_me(request: Request) -> dict[str, Any]:
     ident = current_identity(request)
     return {"role": ident.role if ident else None, "user": ident.public() if ident else None,
-            "needs_setup": not settings.get("admin_password_hash")}
+            "needs_setup": not settings.get("admin_password_hash"), "email_required": bool(config.ADMIN_EMAIL)}
 
 
 @app.post("/api/auth/login")
 def auth_login(body: Login, request: Request, response: Response) -> dict[str, Any]:
-    """Dashboard login: any active account, or the admin password with an empty email."""
+    """Dashboard login: any active account, or the built-in admin (see settings.authenticate)."""
     ident = _login(body, request)
     _set_session(response, request, ident)
     return {"ok": True, "role": ident.role, "user": ident.public()}
@@ -549,7 +549,8 @@ async def upload(source_id: int = Form(...), files: list[UploadFile] = File(...)
 def admin_me(request: Request) -> dict[str, Any]:
     ident = current_identity(request)
     return {"authenticated": bool(ident and ident.role == "admin"), "role": ident.role if ident else None,
-            "user": ident.public() if ident else None, "needs_setup": not settings.get("admin_password_hash")}
+            "user": ident.public() if ident else None, "needs_setup": not settings.get("admin_password_hash"),
+            "email_required": bool(config.ADMIN_EMAIL)}
 
 
 @app.post("/api/admin/setup")

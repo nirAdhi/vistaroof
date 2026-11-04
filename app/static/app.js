@@ -22,7 +22,7 @@
 
   const state = {
     config: null, meta: null, range: { from: null, to: null, preset: "last12" },
-    summary: null, docs: [], chartModes: {}, syncTimer: null,
+    summary: null, docs: [], chartModes: {}, syncTimer: null, emailRequired: false,
   };
 
   // ------------------------------------------------------------ formatting
@@ -75,6 +75,8 @@
     $("#authWrap").style.display = "grid";
     $("main").style.display = "none"; $(".filterbar").style.display = "none";
     $("#sourceLine").textContent = "Sign in to continue";
+    $("#authEmail").required = state.emailRequired;  // ADMIN_EMAIL set on the server: the admin signs in with it, never with an empty email
+    $("#authAdminHint").textContent = state.emailRequired ? "Administrator? Sign in with the admin email and password." : "Administrator? Enter the admin email (or leave it empty) and the admin password.";
     ($("#authEmail").value ? $("#authPassword") : $("#authEmail")).focus();
   }
   function hideLogin() {
@@ -881,6 +883,7 @@
 
   async function init() {
     const me = await api("/api/auth/me");
+    state.emailRequired = !!me.email_required;
     if (me.needs_setup) { location.href = "/admin"; return; }
     if (!me.role) { showLogin(); return; }
     hideLogin();

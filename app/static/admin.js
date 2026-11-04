@@ -12,7 +12,7 @@
   const label = (s) => s ? String(s).replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()) : "—";
   const when = (iso) => iso ? new Date(iso).toLocaleString("en-IE", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "never";
 
-  const state = { overview: null, timer: null, wasSyncing: false };
+  const state = { overview: null, timer: null, wasSyncing: false, emailRequired: false };
 
   function toast(msg, ms = 3000) {
     const t = $("#toast"); t.textContent = msg; t.style.display = "block";
@@ -29,8 +29,12 @@
   function showAuth(needsSetup) {
     $("#adminLayout").style.display = "none"; $("#authWrap").style.display = "grid"; $("#logoutBtn").style.display = "none";
     $("#authTitle").textContent = needsSetup ? "Create the admin password" : "Admin login";
-    $("#authHint").textContent = needsSetup ? "This is the first time the admin area is opened. Choose an admin password (at least 10 characters)." : "Sign in with an admin account, or leave the email empty and use the admin password.";
+    $("#authHint").textContent = needsSetup ? "This is the first time the admin area is opened. Choose an admin password (at least 10 characters)."
+      : state.emailRequired ? "Sign in with the admin email and password, or with an account that has the admin role."
+      : "Sign in with an admin account, or leave the email empty and use the admin password.";
     $("#authEmail").style.display = needsSetup ? "none" : "block";
+    $("#authEmail").placeholder = state.emailRequired ? "Email" : "Email (leave empty for the admin password)";
+    $("#authEmail").required = state.emailRequired && !needsSetup;
     $("#authPassword2").style.display = needsSetup ? "block" : "none";
     $("#authSubmit").textContent = needsSetup ? "Create password" : "Log in";
     $("#authForm").dataset.mode = needsSetup ? "setup" : "login";
@@ -375,10 +379,12 @@
   /** Header subtitle: which admin is signed in (an account, or the built-in admin password). */
   function whoAmI() {
     const me = state.me || {};
-    return me.uid ? `Signed in as ${me.name || me.email}` : "Signed in with the admin password";
+    if (me.uid) return `Signed in as ${me.name || me.email}`;
+    return me.email ? `Signed in as ${me.email} (built-in admin)` : "Signed in with the admin password";
   }
   async function boot() {
     const me = await api("/api/admin/me");
+    state.emailRequired = !!me.email_required;  // ADMIN_EMAIL set on the server: no "leave the email empty" login
     if (!me.authenticated) { showAuth(me.needs_setup); return; }
     state.me = me.user || {};
     $("#adminSub").textContent = whoAmI();

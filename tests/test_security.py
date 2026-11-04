@@ -35,7 +35,7 @@ def test_admin_setup_login_and_password_rules(client, fresh_db):
     assert client.get("/api/admin/me").json()["authenticated"] is True
     assert client.post("/api/admin/setup", json={"password": "another-pw-123"}).status_code == 400
     client.post("/api/admin/logout")
-    assert client.get("/api/admin/me").json() == {"authenticated": False, "role": None, "user": None, "needs_setup": False}
+    assert client.get("/api/admin/me").json() == {"authenticated": False, "role": None, "user": None, "needs_setup": False, "email_required": False}
     assert client.post("/api/admin/login", json={"password": "wrong-password"}).status_code == 401
     assert client.post("/api/admin/login", json={"password": ADMIN_PW}).status_code == 200
     assert client.post("/api/admin/password", json={"current": "nope", "new": "new-password-1"}).status_code == 400
