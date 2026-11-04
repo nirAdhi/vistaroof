@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -311,6 +313,39 @@ def test_call_model_uses_structured_output_and_fallback(monkeypatch, fresh_db):
     assert seen["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert seen["messages"][0]["content"][0]["type"] == "image"
     assert fields["treatment"] == "expense" and fields["net_amount"] == 12.5 and fields["currency"] == "EUR"
+
+
+def test_call_model_turns_billing_and_key_errors_into_api_unavailable(monkeypatch, fresh_db):
+    """A 'credit balance too low' 400 or a 401 must stop the sync (ApiUnavailable), other 400s stay per-file errors."""
+    import anthropic
+    try:
+        import httpx2 as httpx  # anthropic 1.x
+    except ImportError:  # pragma: no cover
+        import httpx
+
+    settings.set_many({"anthropic_api_key": FAKE_KEY, "extract_model": "claude-opus-5-5"})
+
+    def err(cls, status, message):
+        resp = httpx.Response(status, request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+        return cls(message, response=resp, body={"error": {"type": "invalid_request_error", "message": message}})
+
+    class FailingMessages:
+        def __init__(self, exc): self.exc = exc
+        def create(self, **kw): raise self.exc
+
+    def fake_client_raising(exc):
+        return SimpleNamespace(beta=SimpleNamespace(messages=FailingMessages(exc)), messages=FailingMessages(exc))
+
+    blocks = [{"type": "text", "text": "x"}]
+    for exc in (err(anthropic.BadRequestError, 400, "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."),
+                err(anthropic.AuthenticationError, 401, "invalid x-api-key")):
+        monkeypatch.setattr(extract, "client", lambda exc=exc: fake_client_raising(exc))
+        with pytest.raises(extract.ApiUnavailable) as info:
+            extract._call_model(blocks)
+        assert "credit" in str(info.value) or "key" in str(info.value)
+    monkeypatch.setattr(extract, "client", lambda: fake_client_raising(err(anthropic.BadRequestError, 400, "messages: text content blocks must be non-empty")))
+    with pytest.raises(anthropic.BadRequestError):
+        extract._call_model(blocks)
 
 
 def test_ask_endpoint(admin, fresh_db, monkeypatch):

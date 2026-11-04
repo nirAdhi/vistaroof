@@ -14,6 +14,9 @@ Only one sync runs at a time (``_state["running"]``). Requests that arrive meanw
 ``_rerun`` and run when the current one finishes. Progress is in ``_state`` and served by
 ``status()`` for the UI. ``stop()`` (Admin → Stop) ends the run after the files in flight: the run
 and the source are marked ``stopped``, nothing stored is lost, unread files wait for the next sync.
+The same path is taken automatically (``_abort``) when the Claude API is unusable — invalid key, no
+credit (``extract.ApiUnavailable``) — so one clear message replaces thousands of identical error rows;
+the files touched go back to ``pending``.
 
 Per file: ``_process_one()`` → metadata upsert → skip if unchanged / hand-edited → download →
 ``extract.extract()`` → ``db.save_extraction()``. Any exception is recorded on the document
@@ -42,8 +45,9 @@ _lock = threading.Lock()
 _state: dict[str, Any] = {
     "running": False, "phase": "idle", "message": "", "trigger": None, "current_source": None, "current_file": None,
     "queue": [], "total": 0, "processed": 0, "skipped": 0, "errors": 0, "removed": 0, "recent_errors": [],
-    "last_finished_at": None, "last_watch_at": None, "stop_requested": False,
+    "last_finished_at": None, "last_watch_at": None, "stop_requested": False, "stop_reason": None,
 }
+ADMIN_STOP = "stopped by the admin"
 _rerun: dict[int | None, bool] = {}  # source id -> force; None = all enabled sources
 
 
@@ -95,7 +99,7 @@ def start(source_ids: list[int] | None = None, force: bool = False, wait: bool =
         _state.update({
             "running": True, "phase": "starting", "message": "Starting…", "trigger": trigger, "current_source": None,
             "current_file": None, "queue": [s["name"] for s in sources], "total": 0, "processed": 0, "skipped": 0, "errors": 0,
-            "removed": 0, "recent_errors": [], "stop_requested": False,
+            "removed": 0, "recent_errors": [], "stop_requested": False, "stop_reason": None,
         })
     if not sources:
         _set(running=False, phase="done", message="Nothing to sync: no enabled sources", last_finished_at=db.now_iso())
@@ -116,10 +120,22 @@ def stop() -> bool:
         if not _state["running"]:
             return False
         _state["stop_requested"] = True
+        _state["stop_reason"] = ADMIN_STOP
         _state["message"] = "Stopping after the files being read now…"
         _rerun.clear()
     log.info("sync stop requested")
     return True
+
+
+def _abort(reason: str) -> None:
+    """Stop the run because the API is unusable (bad key, no credit): same path as Stop, reason kept."""
+    with _lock:
+        if not _state["stop_requested"]:
+            _state["stop_requested"] = True
+            _state["stop_reason"] = reason
+            _state["message"] = f"Stopping: {reason}"
+            log.error("sync aborted: %s", reason)
+        _rerun.clear()
 
 
 def _run_all(sources: list[dict[str, Any]], force: bool, trigger: str) -> None:
@@ -130,7 +146,9 @@ def _run_all(sources: list[dict[str, Any]], force: bool, trigger: str) -> None:
             with _lock:
                 _state["queue"] = [n for n in _state["queue"] if n != src["name"]]
             _run_source(src, force, trigger)
-        _set(phase="done", message="Sync stopped" if _state["stop_requested"] else "Sync complete", current_source=None, current_file=None)
+        reason = _state["stop_reason"]
+        message = "Sync complete" if not _state["stop_requested"] else "Sync stopped" if reason == ADMIN_STOP else f"Sync stopped: {reason}"
+        _set(phase="done", message=message, current_source=None, current_file=None)
     except Exception as exc:  # pragma: no cover - defensive
         _set(phase="failed", message=f"Sync failed: {exc}")
         log.exception("sync failed")
@@ -183,11 +201,14 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
                         f.cancel()  # files not started yet; the ones in flight finish normally
                     break
         if _state["stop_requested"]:  # the pool has drained: count the files that were in flight too
-            db.update_run(run_id, finished_at=db.now_iso(), status="stopped", message="stopped by the admin",
+            reason = _state["stop_reason"] or ADMIN_STOP
+            by_admin = reason == ADMIN_STOP
+            db.update_run(run_id, finished_at=db.now_iso(), status="stopped", message=reason,
                           processed=_state["processed"] - base["processed"], skipped=_state["skipped"] - base["skipped"],
                           errors=_state["errors"] - base["errors"])
-            db.update_source(src["id"], last_sync_at=db.now_iso(), last_status="stopped", last_error=None)
-            log.info("%s: sync stopped by the admin after %d file(s)", src["name"], _state["processed"] - base["processed"])
+            db.update_source(src["id"], last_sync_at=db.now_iso(), last_status="stopped" if by_admin else "failed",
+                             last_error=None if by_admin else reason)
+            log.info("%s: sync stopped (%s) after %d file(s)", src["name"], reason, _state["processed"] - base["processed"])
             return
         removed = db.mark_missing(src["id"], {m.source_id for m in files})
         if removed:
@@ -235,6 +256,11 @@ def _process_one(source, meta: FileMeta, force: bool) -> str:
         db.mark_skipped(doc_id, str(exc))
         _bump("skipped")
         return "skipped"
+    except extract.ApiUnavailable as exc:  # bad key / no credit: not this file's fault, stop the whole run
+        db.set_status(doc_id, "pending")  # read on the next sync, no error row
+        _note_error(meta.name, str(exc))
+        _abort(str(exc))
+        return "error"
     except Exception as exc:
         msg = f"{type(exc).__name__}: {str(exc)[:400]}"
         db.set_status(doc_id, "error", msg)

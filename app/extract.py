@@ -288,6 +288,20 @@ def test_api_key(key: str, model: str | None = None) -> dict[str, Any]:
         return {"ok": False, "message": f"API error {exc.status_code}: {exc.message}"}
 
 
+class ApiUnavailable(RuntimeError):
+    """The Claude API refuses every request for a reason no retry fixes (invalid key, no credit, no
+    permission). The sync stops on the first one instead of recording the same error on every file."""
+
+
+def _api_unavailable(exc: anthropic.APIStatusError) -> ApiUnavailable | None:
+    if isinstance(exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+        return ApiUnavailable(f"Claude API refused the key ({exc.status_code}): {exc.message}. Check Admin → Claude API.")
+    if isinstance(exc, anthropic.BadRequestError) and "credit balance" in str(exc.message).lower():
+        return ApiUnavailable("Claude API: the Anthropic account has no credit left. Add credit under Plans & Billing "
+                              "at console.anthropic.com, then sync again.")
+    return None
+
+
 def _call_model(blocks: list[dict[str, Any]]) -> tuple[dict[str, Any], str]:
     model = settings.get("extract_model") or "claude-opus-5-5"
     effort = settings.get("extract_effort") or "medium"
@@ -298,10 +312,16 @@ def _call_model(blocks: list[dict[str, Any]]) -> tuple[dict[str, Any], str]:
     )
     c = client()
     try:
-        # Server-side refusal fallback: if the safety layer declines, the API re-runs on a fallback model.
-        response = c.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **common)
-    except (TypeError, anthropic.BadRequestError):
-        response = c.messages.create(**common)
+        try:
+            # Server-side refusal fallback: if the safety layer declines, the API re-runs on a fallback model.
+            response = c.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **common)
+        except (TypeError, anthropic.BadRequestError):
+            response = c.messages.create(**common)
+    except anthropic.APIStatusError as exc:
+        fatal = _api_unavailable(exc)
+        if fatal:
+            raise fatal from exc
+        raise
 
     if response.stop_reason == "refusal":
         raise RuntimeError("model declined to process this document")
