@@ -97,7 +97,9 @@ OUTPUT_SCHEMA: dict[str, Any] = {
         "doc_type": {"type": "string", "enum": DOC_TYPES},
         "direction": {"type": "string", "enum": DIRECTIONS},
         "counterparty": {"type": ["string", "null"]},
-        "counterparty_role": {"type": ["string", "null"], "enum": ["customer", "supplier", "employee", "authority", "bank", "other", None]},
+        # Nullable enums must be written as anyOf: the API rejects an enum next to a ["string", "null"] type list
+        # ("Enum value 'customer' does not match declared type"), which failed every single document.
+        "counterparty_role": {"anyOf": [{"type": "string", "enum": ["customer", "supplier", "employee", "authority", "bank", "other"]}, {"type": "null"}]},
         "document_number": {"type": ["string", "null"]},
         "issue_date": {"type": ["string", "null"], "description": "YYYY-MM-DD"},
         "due_date": {"type": ["string", "null"], "description": "YYYY-MM-DD"},
@@ -107,7 +109,7 @@ OUTPUT_SCHEMA: dict[str, Any] = {
         "total": {"type": ["number", "null"], "description": "Gross amount including VAT"},
         "amount_paid": {"type": ["number", "null"]},
         "payment_status": {"type": "string", "enum": PAYMENT_STATUSES},
-        "category": {"type": ["string", "null"], "enum": EXPENSE_CATEGORIES + INCOME_CATEGORIES + [None]},
+        "category": {"anyOf": [{"type": "string", "enum": EXPENSE_CATEGORIES + INCOME_CATEGORIES}, {"type": "null"}]},
         "project": {"type": ["string", "null"], "description": "Job / site / project reference or address, if any"},
         "line_items": {
             "type": "array",

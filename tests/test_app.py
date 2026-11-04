@@ -303,6 +303,11 @@ def test_call_model_uses_structured_output_and_fallback(monkeypatch, fresh_db):
     fields, model = extract.extract(meta, sources.FileContent(mime="image/jpeg", data=_jpeg()))
     assert seen["model"] == "claude-opus-5-5" and seen["betas"] == ["server-side-fallback-2026-07-01"] and seen["fallbacks"] == "default"
     assert seen["output_config"]["format"]["type"] == "json_schema" and seen["output_config"]["effort"] == "low"
+    # the API refuses an enum declared next to a type list (["string", "null"]); nullable enums must use anyOf
+    for name, prop in seen["output_config"]["format"]["schema"]["properties"].items():
+        assert not (isinstance(prop.get("type"), list) and "enum" in prop), f"{name}: nullable enum must be anyOf"
+    role = seen["output_config"]["format"]["schema"]["properties"]["counterparty_role"]
+    assert {"type": "null"} in role["anyOf"] and "customer" in role["anyOf"][0]["enum"]
     assert seen["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert seen["messages"][0]["content"][0]["type"] == "image"
     assert fields["treatment"] == "expense" and fields["net_amount"] == 12.5 and fields["currency"] == "EUR"
