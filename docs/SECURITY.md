@@ -139,6 +139,10 @@ as third parties.
   connect a dedicated accounts Google account, and disconnect sources no longer needed.
 - **Anthropic and Google see document contents** (Claude for extraction, Google as the storage).
   Both are under their respective data-processing terms; the extracted figures are stored only locally.
+  With `LLM_PROVIDER=ollama` the document text goes to a self-hosted model instead and never leaves
+  the network; that server has no authentication, so it must be reachable only from the app
+  (LAN / firewall), never from the internet. `LLM_FALLBACK=1` re-enables Claude for files the local
+  model cannot read (photos, scanned PDFs) and while the Ollama host is unreachable.
 - **Rate limiting is in-process memory.** With more than one worker process (not the default) use a
   shared store or do limiting at the proxy.
 - **Backups contain all financial data.** Store them encrypted (the file itself is not encrypted;

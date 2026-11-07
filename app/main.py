@@ -50,7 +50,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import analytics, ask, config, db, demo, extract, logsetup, microsoft, previews, settings, sources, sync
+from . import analytics, ask, config, db, demo, extract, llm, logsetup, microsoft, previews, settings, sources, sync
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -198,8 +198,9 @@ def require_admin(request: Request) -> str:
 
 
 def _require_api_key() -> None:
-    if not settings.has_api_key():
-        raise HTTPException(400, "No Claude API key configured. Add one in Admin → Claude.")
+    """Documents can only be read when a model backend is usable (Ollama configured, or a Claude key saved)."""
+    if not settings.llm_ready():
+        raise HTTPException(400, "No Claude API key configured. Add one in Admin → Claude, or set LLM_PROVIDER=ollama.")
 
 
 def _base_url(request: Request) -> str:
@@ -331,6 +332,7 @@ def get_config(request: Request) -> dict[str, Any]:
     return {
         "company": settings.get("company_name"), "currency": settings.get("base_currency"), "model": settings.get("extract_model"),
         "has_api_key": settings.has_api_key(), "has_google_client": settings.google_client_config() is not None,
+        **settings.llm_public(),
         "sources": srcs, "counts": db.status_counts(), "demo_loaded": demo.count() > 0,
         "watch_interval_seconds": settings.get_int("watch_interval_seconds", 120),
         "auto_sync_minutes": settings.get_int("auto_sync_minutes", 0), "role": current_role(request), "version": db.ledger_version(),
@@ -769,6 +771,12 @@ def admin_test_key(body: KeyTest) -> dict[str, Any]:
     return extract.test_api_key(key, body.model or None)
 
 
+@app.post("/api/admin/llm-check", dependencies=[Depends(require_admin)])
+def admin_llm_check() -> dict[str, Any]:
+    """Live check of the configured document reader (Ollama: version, models, probe; Claude: key test)."""
+    return llm.health()
+
+
 class GoogleClient(BaseModel):
     json_text: str = Field(max_length=50_000)
 
@@ -1080,7 +1088,7 @@ def ms_oauth_callback(request: Request, state: str = "", code: str = "", error: 
                      last_error=location_err, enabled=1, drive_page_token=None)
     if location_err:
         return RedirectResponse("/admin?error=" + quote(f"Connected {email}, but the folder link could not be opened: {location_err}") + "#sources", status_code=303)
-    started = settings.has_api_key() and sync.start([source_id], trigger="oauth")
+    started = settings.llm_ready() and sync.start([source_id], trigger="oauth")
     msg = f"Connected {email or 'Microsoft 365'}." + (" Sync started." if started else " Add a Claude API key to start syncing.")
     return RedirectResponse("/admin?connected=" + quote(msg) + "#sources", status_code=303)
 
@@ -1103,7 +1111,7 @@ def oauth_callback(request: Request, state: str = "", code: str = "", error: str
         return RedirectResponse("/admin?error=" + quote(f"Google sign-in failed: {exc}") + "#sources", status_code=303)
     sources.save_token(source_id, token_json)
     db.update_source(source_id, account_email=email, last_status="connected", last_error=None, enabled=1, drive_page_token=None)
-    started = settings.has_api_key() and sync.start([source_id], trigger="oauth")
+    started = settings.llm_ready() and sync.start([source_id], trigger="oauth")
     msg = f"Connected {email or 'Google Drive'}." + (" Sync started." if started else " Add a Claude API key to start syncing.")
     return RedirectResponse("/admin?connected=" + quote(msg) + "#sources", status_code=303)
 

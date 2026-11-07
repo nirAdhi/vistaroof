@@ -757,16 +757,16 @@
       <div class="sync-status">${st.running ? `${st.processed + st.skipped + st.errors} of ${st.total}` : ""} · read ${st.processed} · unchanged/skipped ${st.skipped} · errors ${st.errors}</div>
       <div style="margin:12px 0" class="small">In database: ${Object.entries(c).map(([k, v]) => `<span class="chip">${esc(label(k))}: ${v}</span>`).join(" ") || "nothing yet"}</div>
       <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn primary" id="syncNow" ${st.running || !enabled || !state.config.has_api_key ? "disabled" : ""}>Sync new &amp; changed files</button>
-        <button class="btn" id="syncForce" ${st.running || !enabled || !state.config.has_api_key ? "disabled" : ""} title="Re-read every file, even ones already processed">Full re-read</button>
+        <button class="btn primary" id="syncNow" ${st.running || !enabled || !state.config.llm_ready ? "disabled" : ""}>Sync new &amp; changed files</button>
+        <button class="btn" id="syncForce" ${st.running || !enabled || !state.config.llm_ready ? "disabled" : ""} title="Re-read every file, even ones already processed">Full re-read</button>
       </div>
-      ${state.config.has_api_key && enabled ? `<p class="muted small"><span class="live-dot"></span>${watch > 0 ? `Watching SharePoint / Drive for changes every ${watch >= 60 ? Math.round(watch / 60) + " min" : watch + " s"}${st.last_watch_at ? ` · last check ${new Date(st.last_watch_at).toLocaleTimeString("en-IE", { hour: "2-digit", minute: "2-digit" })}` : ""}. New files appear here automatically.` : "Automatic watching is off (Admin → Claude API)."}</p>` : ""}
-      ${!state.config.has_api_key ? `<p class="muted small">No Claude API key yet — add one in <a href="/admin#claude">Admin → Claude API</a>.</p>` : ""}
+      ${state.config.llm_ready && enabled ? `<p class="muted small"><span class="live-dot"></span>${watch > 0 ? `Watching SharePoint / Drive for changes every ${watch >= 60 ? Math.round(watch / 60) + " min" : watch + " s"}${st.last_watch_at ? ` · last check ${new Date(st.last_watch_at).toLocaleTimeString("en-IE", { hour: "2-digit", minute: "2-digit" })}` : ""}. New files appear here automatically.` : "Automatic watching is off (Admin → Claude API)."}</p>` : ""}
+      ${!state.config.llm_ready ? `<p class="muted small">No document reader yet — add a Claude API key in <a href="/admin#claude">Admin → Claude API</a>, or set LLM_PROVIDER=ollama in .env.</p>` : ""}
       ${!enabled ? `<p class="muted small">No connected sources yet — add a SharePoint / OneDrive folder, Google Drive or local folder in <a href="/admin#sources">Admin → Sources</a>.</p>` : ""}
       ${st.recent_errors && st.recent_errors.length ? `<h3 style="font-size:13px;margin:14px 0 6px">Recent errors</h3><ul class="small" style="padding-left:18px">${st.recent_errors.map((e) => `<li><b>${esc(e.file)}</b>: ${esc(e.error)}</li>`).join("")}</ul>` : ""}
       ${runs ? `<h3 style="font-size:13px;margin:14px 0 6px">Previous runs</h3><table><thead><tr><th>Started</th><th>Source</th><th class="num">Files</th><th class="num">Read</th><th class="num">Skipped</th><th class="num">Errors</th><th>Status</th></tr></thead><tbody>${runs}</tbody></table>` : ""}`;
     $("#syncNow").addEventListener("click", () => startSync(false));
-    $("#syncForce").addEventListener("click", () => { if (confirm("Re-read every file with Claude? This costs API usage for every document.")) startSync(true); });
+    $("#syncForce").addEventListener("click", () => { if (confirm(state.config.llm_provider === "ollama" ? "Re-read every file with the local model? This takes a while." : "Re-read every file with Claude? This costs API usage for every document.")) startSync(true); });
     $("#syncBtn").disabled = !!st.running;
     $("#syncBtn").textContent = st.running ? `Syncing ${pct}%` : "Sync now";
   }
@@ -782,7 +782,7 @@
         <span class="muted small">${s.done_count} read${s.error_count ? ` · <span class="neg">${s.error_count} errors</span>` : ""} · last sync ${when(s.last_sync_at)}</span>
         <span class="status ${s.last_status === "ok" || s.last_status === "connected" || s.last_status === "ready" ? "paid" : s.last_status === "failed" ? "overdue" : "unknown"}">${label(s.enabled ? s.last_status : "disabled")}</span>
       </div>`).join("")}</div>` : `<div class="empty">No sources connected yet</div>`) +
-      `<p class="muted small" style="margin:12px 0 0">Claude key: <b class="${c.has_api_key ? "pos" : "neg"}">${c.has_api_key ? "saved" : "missing"}</b> · model <b>${esc(c.model)}</b> · currency <b>${esc(c.currency)}</b>${c.auto_sync_minutes ? ` · auto-sync every ${c.auto_sync_minutes} min` : ""}</p>`;
+      `<p class="muted small" style="margin:12px 0 0">${c.llm_provider === "ollama" ? `Reader: <b>Ollama</b> · model <b>${esc(c.llm_model)}</b>${c.llm_fallback ? " · Claude fallback on" : ""}` : `Claude key: <b class="${c.has_api_key ? "pos" : "neg"}">${c.has_api_key ? "saved" : "missing"}</b> · model <b>${esc(c.model)}</b>`} · currency <b>${esc(c.currency)}</b>${c.auto_sync_minutes ? ` · auto-sync every ${c.auto_sync_minutes} min` : ""}</p>`;
     const tr = state.meta.treatments;
     $("#rulesPanel").innerHTML = `<table><thead><tr><th>Counted as</th><th>Meaning</th><th>Which documents</th></tr></thead><tbody>
       <tr><td>${treatmentChip("revenue")}</td><td>${esc(tr.revenue)}</td><td>Sales invoices the company issued (credit notes issued are subtracted)</td></tr>

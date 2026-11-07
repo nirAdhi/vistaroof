@@ -41,6 +41,41 @@ faster previews). Untick "Allow uploads" on a source and the app never asks for 
 The dashboard ships with demo data (including generated sample pages for previews) so it can be
 explored before anything is connected.
 
+## Which model reads the documents (Ollama or Claude)
+
+`LLM_PROVIDER` in `.env` (or `.env.production`) picks the backend; the default is `ollama`.
+
+| | `LLM_PROVIDER=ollama` (default) | `LLM_PROVIDER=claude` |
+|---|---|---|
+| Where the text goes | A self-hosted Ollama server on your network; nothing leaves the LAN | The Anthropic API |
+| Reads | Text PDFs, Excel, Word, text/CSV (the text is extracted first, see `app/textract.py`) | Everything, including photos and scanned PDFs |
+| Needs | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` (e.g. `qwen2.5:3b`) | A Claude key saved in Admin → Claude API |
+| Prompt | Short prompt + flat JSON schema written for a 3B model (`extract.SMALL_PROMPT`) | Full prompt + nested schema |
+
+```
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://192.168.0.183:11434   # the Ollama PC; keep it off the internet, it has no login
+OLLAMA_MODEL=qwen2.5:3b
+# OLLAMA_NUM_CTX=8192  OLLAMA_TIMEOUT=180  OLLAMA_KEEP_ALIVE=30m
+# LLM_FALLBACK=1   -> photos / scanned PDFs (and everything while Ollama is unreachable) go to Claude, if a key is saved
+```
+
+Every Ollama request uses temperature 0, a JSON schema in `format`, `num_ctx` ≥ 8192 (long documents
+are cut to fit, keeping the start and the end), `keep_alive` 30m and a 180 s timeout. A malformed
+answer is retried twice with the error pointed out. If the Ollama PC is asleep the sync stops with
+one clear message instead of failing every file; photos and scanned PDFs are marked *skipped* with
+the reason unless the Claude fallback is on.
+
+Checks:
+
+```
+.venv\Scripts\python -m app.llm_check            # version, installed models, is OLLAMA_MODEL pulled, one-line probe
+.venv\Scripts\python -m app.llm_check --sample   # + classifies two built-in sample documents
+.venv\Scripts\python scripts\ollama_smoke.py     # end to end: a text invoice, a PDF receipt and an Excel statement
+```
+
+The same check is behind the **Check Ollama** button under Admin → Claude API.
+
 ## Production
 
 See `docs/DEPLOYMENT.md`. In short:
@@ -53,7 +88,7 @@ docker compose up -d --build
 ## Development
 
 ```
-.venv\Scripts\python -m pytest tests        # 55 tests, no network (fake Claude, fake Drive, fake Microsoft Graph)
+.venv\Scripts\python -m pytest tests        # 69 tests, no network (fake Claude, fake Ollama, fake Drive, fake Microsoft Graph)
 .venv\Scripts\python -m pip_audit           # dependency vulnerabilities
 .venv\Scripts\python -m bandit -r app -ll   # static analysis
 ```
@@ -68,7 +103,10 @@ app/
   sources.py     Google Drive (list, fetch, changes feed, upload, OAuth), local folders, source factory
   microsoft.py   Microsoft 365: Graph client, OAuth+PKCE, link resolution, listing, delta, uploads
   sync.py        sync pipeline, watcher/scheduler thread, uploads processing
-  extract.py     Claude structured extraction + deterministic bookkeeping rules
+  extract.py     document reading: Claude structured extraction, the small-model (Ollama) prompt + schema, bookkeeping rules
+  ollama.py      Ollama client (native /api/chat with JSON schema, num_ctx, keep_alive; health check)
+  textract.py    plain-text extraction (PDF text layer, Excel, Word) for text-only models
+  llm.py         provider façade (ready? health?) + llm_check.py command line; errors.py shared ApiUnavailable
   analytics.py   dashboard aggregates and company directory
   ask.py         natural-language questions
   previews.py    cached viewable copies of files; render_demo.py sample pages; images.py photo normalisation

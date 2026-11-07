@@ -23,6 +23,12 @@ ADMIN_PASSWORD    Built-in admin password, applied at every start (10+ character
                   changed from the UI: edit the file and restart instead.
 ADMIN_EMAIL       Sign-in name for that admin; when set, the login boxes require it and an empty
                   email is refused. Without it the admin signs in with the email field left empty.
+LLM_PROVIDER      ``ollama`` (default) or ``claude``: which model reads the documents.
+LLM_FALLBACK      ``1`` lets an Ollama setup send a file to Claude when Ollama is unreachable or the
+                  file is a photo / scanned PDF (needs a saved Claude key).
+OLLAMA_BASE_URL   The Ollama server, e.g. ``http://192.168.0.183:11434`` (default: localhost).
+OLLAMA_MODEL      Model name as shown by ``ollama list`` (default ``qwen2.5:3b``).
+OLLAMA_NUM_CTX / OLLAMA_TIMEOUT / OLLAMA_KEEP_ALIVE   context tokens (min 8192), seconds, keep-alive.
 COMPANY_NAME etc. Initial defaults for settings, used only until changed in Admin.
 """
 from __future__ import annotations
@@ -59,6 +65,19 @@ IS_PRODUCTION = bool(PUBLIC_BASE_URL)  # a public URL means the app is exposed b
 # Built-in admin login from the environment (see settings.apply_env_admin()).
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip().lower()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
+# Which model reads the documents (see app/llm.py). ``ollama`` = self-hosted, text only, nothing leaves
+# the network; ``claude`` = Anthropic API (also reads photos and scanned PDFs). No addresses are
+# hard-coded here: the Ollama server's address comes from .env (OLLAMA_BASE_URL).
+LLM_PROVIDER = (os.getenv("LLM_PROVIDER", "ollama").strip().lower() or "ollama")
+if LLM_PROVIDER not in ("ollama", "claude"):
+    raise RuntimeError(f"LLM_PROVIDER must be 'ollama' or 'claude', not {LLM_PROVIDER!r}")
+LLM_FALLBACK = os.getenv("LLM_FALLBACK", "0").strip().lower() in ("1", "true", "yes", "on")  # Ollama → Claude when needed
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip().rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b").strip()
+OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))          # tokens of context the model is given (min 8192)
+OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "180"))         # seconds per request (the first call loads the model)
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m").strip()  # keep the model in memory between documents
 
 # Initial values for the settings table (used only until the admin changes them in the UI).
 ENV_DEFAULTS = {

@@ -309,7 +309,7 @@ def process_uploaded(src: dict[str, Any], files: list[tuple[str, bytes, str]]) -
     for filename, data, mime in files:
         try:
             meta = source.upload(filename, data, mime)
-            status = _process_one(source, meta, force=False) if settings.has_api_key() else "pending"
+            status = _process_one(source, meta, force=False) if settings.llm_ready() else "pending"
             doc = db.get_document(db.upsert_file_metadata(meta.as_dict())) or {}
             results.append({"name": filename, "ok": True, "doc_id": doc.get("id"), "status": doc.get("status", status),
                             "doc_type": doc.get("doc_type"), "total": doc.get("total"), "counterparty": doc.get("counterparty"),
@@ -364,7 +364,7 @@ def start_scheduler() -> None:
         while True:
             time.sleep(15)
             try:
-                if not settings.has_api_key():
+                if not settings.llm_ready():
                     continue
                 watch_every = settings.get_int("watch_interval_seconds", 120)
                 if watch_every > 0 and time.monotonic() - last_watch >= watch_every and not _state["running"]:

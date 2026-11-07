@@ -23,6 +23,9 @@ os.environ.pop("APP_SECRET_KEY", None)
 os.environ.pop("PUBLIC_BASE_URL", None)
 os.environ["ADMIN_EMAIL"] = ""  # explicit empty: the developer's .env / .env.production admin login must not leak into the tests
 os.environ["ADMIN_PASSWORD"] = ""
+os.environ["LLM_PROVIDER"] = "claude"  # the suite fakes Claude; tests/test_ollama.py switches the provider itself
+os.environ["LLM_FALLBACK"] = "0"
+os.environ["OLLAMA_BASE_URL"] = "http://ollama.test:11434"  # never a real host: the Ollama tests route httpx through a fake
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient  # noqa: E402

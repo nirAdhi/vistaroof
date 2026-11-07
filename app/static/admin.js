@@ -90,7 +90,7 @@
     const total = st.total || 0, done = (st.processed || 0) + (st.skipped || 0) + (st.errors || 0);
     const pct = total ? Math.round(done / total * 100) : 0;
     const warn = [];
-    if (!s.has_api_key) warn.push(`<a href="#claude" data-go="claude">Add a Claude API key</a> before syncing.`);
+    if (!s.llm_ready) warn.push(`<a href="#claude" data-go="claude">Add a Claude API key</a> before syncing (or set <code>LLM_PROVIDER=ollama</code> in .env).`);
     if (!s.has_google_client && !s.has_ms_client) warn.push(`Set up <a href="#microsoft" data-go="microsoft">Microsoft 365</a> (SharePoint / OneDrive) or <a href="#google" data-go="google">Google Drive</a> to connect cloud folders.`);
     if (state.overview.production && !s.secrets_encrypted) warn.push(`<b>APP_SECRET_KEY is not set</b>: the API key and Google tokens are stored unencrypted. See docs/DEPLOYMENT.md.`);
     if (!state.overview.production) warn.push(`Running in local mode (no PUBLIC_BASE_URL). Fine on this PC; set it before exposing the app on a server.`);
@@ -99,7 +99,7 @@
       <div class="strip-row">
         <div><b>${st.running ? esc(st.message || "Syncing…") : "Sync idle"}</b>${st.running && st.current_file ? ` <span class="muted">— ${esc(st.current_file)}</span>` : ""}${!st.running && st.last_finished_at ? ` <span class="muted">— last finished ${when(st.last_finished_at)}</span>` : ""}</div>
         <div class="muted small">${Object.entries(c).map(([k, v]) => `${label(k)}: ${v}`).join(" · ") || "no documents yet"}</div>
-        <div class="actions"><button class="btn primary sm" id="syncAllBtn" ${st.running || !s.has_api_key ? "disabled" : ""}>Sync all sources</button> <button class="btn sm" id="watchNowBtn" ${st.running || !s.has_api_key ? "disabled" : ""} title="Ask SharePoint / Google Drive for changes right now">Check for changes</button>${st.running ? ` <button class="btn sm" id="stopSyncBtn" ${st.stop_requested ? "disabled" : ""} title="Finish the files being read now, then stop. Nothing already read is lost.">${st.stop_requested ? "Stopping…" : "Stop"}</button>` : ""}</div>
+        <div class="actions"><button class="btn primary sm" id="syncAllBtn" ${st.running || !s.llm_ready ? "disabled" : ""}>Sync all sources</button> <button class="btn sm" id="watchNowBtn" ${st.running || !s.llm_ready ? "disabled" : ""} title="Ask SharePoint / Google Drive for changes right now">Check for changes</button>${st.running ? ` <button class="btn sm" id="stopSyncBtn" ${st.stop_requested ? "disabled" : ""} title="Finish the files being read now, then stop. Nothing already read is lost.">${st.stop_requested ? "Stopping…" : "Stop"}</button>` : ""}</div>
       </div>
       ${st.running ? `<div class="progress"><i style="width:${pct}%"></i></div><div class="muted small">${done} of ${total} files · read ${st.processed} · unchanged/skipped ${st.skipped} · errors ${st.errors}${st.queue && st.queue.length ? ` · waiting: ${st.queue.map(esc).join(", ")}` : ""}</div>` : ""}
       ${warn.length ? `<ul class="warnlist">${warn.map((w) => `<li>${w}</li>`).join("")}</ul>` : ""}`;
@@ -140,8 +140,8 @@
         </div>
         <div class="actions">
           ${isCloud(src) ? `<a class="btn ${src.connected ? "" : "primary"} sm" href="/admin/sources/${src.id}/connect">${src.connected ? "Reconnect / change account" : src.kind === "m365" ? "Connect with Microsoft" : "Connect with Google"}</a>` : ""}
-          <button class="btn sm ${isCloud(src) && src.connected ? "primary" : ""}" data-act="sync" ${!s.has_api_key || !src.connected ? "disabled" : ""}>Sync now</button>
-          <button class="btn sm" data-act="force" ${!s.has_api_key || !src.connected ? "disabled" : ""} title="Re-read every file, even ones already processed">Full re-read</button>
+          <button class="btn sm ${isCloud(src) && src.connected ? "primary" : ""}" data-act="sync" ${!s.llm_ready || !src.connected ? "disabled" : ""}>Sync now</button>
+          <button class="btn sm" data-act="force" ${!s.llm_ready || !src.connected ? "disabled" : ""} title="Re-read every file, even ones already processed">Full re-read</button>
           <button class="btn sm" data-act="edit">Edit</button>
           ${isCloud(src) && src.connected ? `<button class="btn sm" data-act="disconnect">Disconnect</button>` : ""}
           <button class="btn sm danger-btn" data-act="remove">Remove</button>
@@ -201,7 +201,22 @@
     ask.innerHTML = `<option value="">Same as reading model</option>` + models.map((m) => `<option value="${m.id}">${esc(m.label)}</option>`).join("");
     fillForm($("#claudeForm"), s);
     $('#claudeForm [name="anthropic_api_key"]').placeholder = s.has_api_key ? `Saved: ${s.anthropic_api_key_masked} — paste a new key to replace` : "sk-ant-…";
-    $("#keyStatus").innerHTML = s.has_api_key ? `<span class="ok">Key saved (${esc(s.anthropic_api_key_masked)})</span>` : `<span class="missing">No key saved — syncing and Ask are disabled</span>`;
+    const ollama = s.llm_provider === "ollama";
+    $("#keyStatus").innerHTML = s.has_api_key ? `<span class="ok">Key saved (${esc(s.anthropic_api_key_masked)})${ollama ? " — used only as the fallback" : ""}</span>`
+      : ollama ? `<span class="muted">No key saved — not needed while the provider is Ollama (only for LLM_PROVIDER=claude or LLM_FALLBACK=1)</span>`
+      : `<span class="missing">No key saved — syncing and Ask are disabled</span>`;
+    const who = ollama ? `<b>Ollama</b> · model <code>${esc(s.llm_model)}</code> at <code>${esc(s.llm_url)}</code>${s.llm_fallback ? " · Claude fallback on" : ""}`
+      : `<b>Claude API</b> · model <code>${esc(s.llm_model)}</code>`;
+    $("#llmCard").innerHTML = `<div class="strip-row"><div>Document reader: ${who} <span class="muted small">(set by LLM_PROVIDER in .env)</span></div>
+      <div><button class="btn sm" id="llmCheckBtn">${ollama ? "Check Ollama" : "Check Claude"}</button></div></div><div class="small muted" id="llmStatus"></div>`;
+    $("#llmCheckBtn").addEventListener("click", async () => {
+      const btn = $("#llmCheckBtn"); btn.disabled = true; btn.textContent = "Checking…";
+      try {
+        const r = await api("/api/admin/llm-check", { method: "POST" });
+        $("#llmStatus").innerHTML = `<span class="${r.ok ? "ok" : "missing"}">${esc(r.message)}</span>${r.models ? `<br><span class="muted">Installed models: ${esc(r.models.join(", ") || "none")}</span>` : ""}${r.fallback ? `<br><span class="muted">${esc(r.fallback)}</span>` : ""}`;
+      } catch (err) { $("#llmStatus").innerHTML = `<span class="missing">${esc(err.message)}</span>`; }
+      btn.disabled = false; btn.textContent = ollama ? "Check Ollama" : "Check Claude";
+    });
   }
   $("#showKeyBtn").addEventListener("click", () => { const i = $('#claudeForm [name="anthropic_api_key"]'); i.type = i.type === "password" ? "text" : "password"; $("#showKeyBtn").textContent = i.type === "password" ? "Show" : "Hide"; });
   $("#testKeyBtn").addEventListener("click", async () => {

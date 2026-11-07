@@ -145,6 +145,19 @@ def has_api_key() -> bool:
     return looks_like_key(get("anthropic_api_key"))
 
 
+def llm_ready() -> bool:
+    """Can documents be read at all? Ollama needs no key; Claude needs a saved key."""
+    return config.LLM_PROVIDER == "ollama" or has_api_key()
+
+
+def llm_public() -> dict[str, Any]:
+    """Provider summary for the UI (no secrets)."""
+    if config.LLM_PROVIDER == "ollama":
+        return {"llm_provider": "ollama", "llm_model": config.OLLAMA_MODEL, "llm_url": config.OLLAMA_BASE_URL,
+                "llm_fallback": config.LLM_FALLBACK and has_api_key(), "llm_ready": True}
+    return {"llm_provider": "claude", "llm_model": get("extract_model"), "llm_url": "", "llm_fallback": False, "llm_ready": has_api_key()}
+
+
 def masked_key() -> str:
     """``sk-ant-a…1234`` style display so the admin can recognise the key without exposing it."""
     k = get("anthropic_api_key").strip()
@@ -170,6 +183,7 @@ def public() -> dict[str, Any]:
     out = {k: get(k) for k in PUBLIC_KEYS}
     out["anthropic_api_key_masked"] = masked_key()
     out["has_api_key"] = has_api_key()
+    out.update(llm_public())
     cfg = google_client_config()
     out["has_google_client"] = cfg is not None
     if cfg:

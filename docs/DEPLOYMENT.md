@@ -41,6 +41,20 @@ ADMIN_EMAIL=you@example.com     # sign-in name; required at login once set
 ADMIN_PASSWORD=<10+ characters>
 ```
 
+**Document reader.** `LLM_PROVIDER=claude` uses the Anthropic API with the key saved in Admin;
+`LLM_PROVIDER=ollama` (the default when the variable is absent) uses a self-hosted Ollama server:
+
+```
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://192.168.0.183:11434   # must be reachable from the app container; never expose it publicly
+OLLAMA_MODEL=qwen2.5:3b                      # ollama pull qwen2.5:3b on that machine
+LLM_FALLBACK=0                               # 1 = send photos / scanned PDFs (and everything while Ollama is down) to Claude
+```
+
+Verify from inside the container with `python -m app.llm_check` (Docker:
+`docker compose exec app python -m app.llm_check`). A public deployment that should keep using
+Claude must set `LLM_PROVIDER=claude` explicitly.
+
 The app applies these at every start, so `/admin` never asks you to create a password, and resetting
 it is: edit the file, `docker compose up -d`. Without `ADMIN_PASSWORD` the first visit to `/admin`
 asks for a password; if it is forgotten, `docker compose exec app python -m app.reset_admin` clears

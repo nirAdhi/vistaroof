@@ -93,7 +93,8 @@
 
     <!-- ===== CLAUDE ===== -->
     <section class="sec" id="sec-claude">
-      <div class="sec-head"><h2>Claude API</h2><div class="muted">The key and model used to read documents and answer questions.</div></div>
+      <div class="sec-head"><h2>Claude API</h2><div class="muted">Which model reads the documents and answers questions. The provider is chosen in <code>.env</code> (<code>LLM_PROVIDER</code>: a self-hosted Ollama server, or the Claude API); the Claude key below is used when the provider is Claude, or as the fallback.</div></div>
+      <div class="card" id="llmCard"></div>
       <div class="card">
         <form id="claudeForm" class="form">
           <label>API key
