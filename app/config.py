@@ -87,6 +87,8 @@ ENV_DEFAULTS = {
     "base_currency": os.getenv("BASE_CURRENCY", "EUR"),
     "country": os.getenv("COUNTRY", "Ireland"),
     "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY", ""),
+    "llm_provider": LLM_PROVIDER,                 # Admin → Claude API can switch it; .env is the default
+    "llm_fallback": "1" if LLM_FALLBACK else "0",
     "extract_model": os.getenv("EXTRACT_MODEL", "claude-opus-5-5"),
     "extract_effort": os.getenv("EXTRACT_EFFORT", "medium"),
     "ask_model": os.getenv("ASK_MODEL", ""),

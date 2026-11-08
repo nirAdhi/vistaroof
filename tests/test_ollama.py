@@ -110,7 +110,7 @@ def test_photos_and_scanned_pdfs_are_skipped_without_fallback(monkeypatch, fresh
 def test_fallback_to_claude_for_vision_and_when_ollama_is_down(monkeypatch, fresh_db, fake_claude):
     fake = FakeOllama()
     install_fake_ollama(monkeypatch, fake)
-    monkeypatch.setattr(config, "LLM_FALLBACK", True)
+    settings.set_value("llm_fallback", "1")
     # a photo goes to Claude (fake_claude's "default" canned answer is a money_out document)
     fields, model = extract.extract(_meta("till.jpg", "image/jpeg"), FileContent(mime="image/jpeg", data=jpeg_bytes()))
     assert model == "fake-model" and fields["treatment"] == "expense" and len(fake_claude.calls) == 1 and fake.requests == []
@@ -215,7 +215,7 @@ def test_sync_end_to_end_with_ollama_and_no_claude_key(admin, fresh_db, monkeypa
 
 
 def test_claude_provider_still_works_and_needs_a_key(admin, fresh_db, monkeypatch, fake_claude):
-    monkeypatch.setattr(config, "LLM_PROVIDER", "claude")
+    settings.set_value("llm_provider", "claude")
     cfg = admin.get("/api/config").json()
     assert cfg["llm_provider"] == "claude" and cfg["llm_ready"] is True
     fields, model = extract.extract(_meta("INV-1.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
@@ -223,3 +223,57 @@ def test_claude_provider_still_works_and_needs_a_key(admin, fresh_db, monkeypatc
     settings.set_value("anthropic_api_key", "")
     assert admin.get("/api/config").json()["llm_ready"] is False
     assert admin.post("/api/sync").status_code == 400
+
+
+def test_provider_can_be_switched_in_admin_and_status_follows(admin, fresh_db, monkeypatch, fake_claude):
+    fake = FakeOllama()
+    install_fake_ollama(monkeypatch, fake)
+    assert admin.put("/api/admin/settings", json={"llm_provider": "gpt"}).status_code == 400
+    r = admin.put("/api/admin/settings", json={"llm_provider": "claude", "llm_fallback": True}).json()
+    assert r["llm_provider"] == "claude" and r["llm_fallback"] is True and settings.llm_provider() == "claude"
+    fields, model = extract.extract(_meta("INV-1.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+    assert model == "fake-model" and fake.requests == []  # Claude read it
+    st = llm.refresh_status()
+    assert st["state"] == "ready" and st["provider"] == "claude" and st["label"] == "Claude ready"
+    r = admin.put("/api/admin/settings", json={"llm_provider": "ollama"}).json()
+    assert r["llm_provider"] == "ollama" and r["llm_fallback_usable"] is True  # fallback on + key saved
+    fields, model = extract.extract(_meta("INV-2.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+    assert model == "ollama/qwen2.5:3b" and len(fake.requests) == 1
+
+
+def test_live_status_connected_unreachable_and_model_missing(admin, fresh_db, monkeypatch):
+    fake = FakeOllama()
+    install_fake_ollama(monkeypatch, fake)
+    st = llm.refresh_status()
+    assert st["state"] == "connected" and st["ok"] and st["version"] == "0.40.14" and st["checked_at"] and st["probe"] is None
+    assert fake.requests == []  # the periodic check never calls the model
+    v = admin.get("/api/version").json()
+    assert v["llm"]["state"] == "connected" and v["llm"]["label"] == "Ollama connected" and v["llm"]["model"] == "qwen2.5:3b"
+    assert admin.get("/api/config").json()["llm_status"]["state"] == "connected"
+    fake.down = True
+    st = llm.refresh_status()
+    assert st["state"] == "unreachable" and st["ok"] is False and "Is the Ollama PC awake" in st["message"]
+    assert admin.get("/api/sync/status").json()["llm"]["label"] == "Ollama unreachable"
+    fake.down = False
+    monkeypatch.setattr(config, "OLLAMA_MODEL", "phi3:mini")
+    st = llm.refresh_status()
+    assert st["state"] == "model_missing" and "ollama pull phi3:mini" in st["message"]
+    # the Admin "Check now" button: same check plus a probe, and it updates the stored status
+    monkeypatch.setattr(config, "OLLAMA_MODEL", "qwen2.5:3b")
+    fake.answers.append("OK")
+    r = admin.post("/api/admin/llm-check").json()
+    assert r["state"] == "connected" and r["probe"] == "OK" and llm.status()["state"] == "connected"
+
+
+def test_read_by_counts_show_which_model_produced_the_figures(admin, fresh_db, monkeypatch, tmp_path):
+    fake = FakeOllama()
+    install_fake_ollama(monkeypatch, fake)
+    folder = tmp_path / "Docs"
+    folder.mkdir()
+    for i in range(3):
+        (folder / f"INV-{i}.txt").write_text(INVOICE_TEXT, encoding="utf-8")
+    src = admin.post("/api/admin/sources", json={"kind": "local", "name": "Docs", "local_folder": str(folder)}).json()
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    st = admin.get("/api/sync/status").json()
+    assert st["read_by"] == {"ollama/qwen2.5:3b": 3}
+    assert admin.get("/api/summary").json()["totals"]["revenue"] == 3 * 4200.0  # the figures, not the files, are in the ledger

@@ -30,6 +30,7 @@
     <button data-view="sync">Sync &amp; setup</button>
   </nav>
   <div class="spacer"></div>
+  <span class="ai-badge" id="aiBadge" title="Which AI reads the documents, and whether it can be reached right now">AI: checking…</span>
   <button class="btn primary" id="uploadBtn" title="Upload invoices or receipts into Google Drive and the ledger">⬆ Upload</button>
   <button class="btn" id="syncBtn" title="Scan every connected source for new or changed documents">Sync now</button>
   <a class="btn" href="/admin" id="adminLink" title="API keys, sources, users, settings">Admin</a>
@@ -237,7 +238,7 @@
   <section class="view" id="view-sync">
     <div class="grid two">
       <div class="card">
-        <div class="card-head"><div><h2>Sync status</h2><div class="sub">Each new or changed file is read once and classified by Claude</div></div></div>
+        <div class="card-head"><div><h2>Sync status</h2><div class="sub">Each new or changed file is read once by the document reader shown below and only its figures are kept</div></div></div>
         <div id="syncPanel"></div>
       </div>
       <div class="card">

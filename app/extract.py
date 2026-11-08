@@ -509,7 +509,7 @@ def _small_to_fields(obj: dict[str, Any], truncated: bool) -> dict[str, Any]:
 
 
 def _claude_fallback_available() -> bool:
-    return config.LLM_FALLBACK and settings.has_api_key()
+    return settings.llm_fallback() and settings.has_api_key()
 
 
 def small_text_budget() -> int:
@@ -547,6 +547,6 @@ def _extract_ollama(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any
 
 def extract(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
     """Read one document with the configured provider. Returns (fields, model name)."""
-    if config.LLM_PROVIDER == "ollama":
+    if settings.llm_provider() == "ollama":
         return _extract_ollama(meta, content)
     return _extract_claude(meta, content)

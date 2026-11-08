@@ -95,9 +95,12 @@
     if (state.overview.production && !s.secrets_encrypted) warn.push(`<b>APP_SECRET_KEY is not set</b>: the API key and Google tokens are stored unencrypted. See docs/DEPLOYMENT.md.`);
     if (!state.overview.production) warn.push(`Running in local mode (no PUBLIC_BASE_URL). Fine on this PC; set it before exposing the app on a server.`);
     const c = st.counts || {};
+    const l = st.llm || {};
+    const lcls = { connected: "good", ready: "good", model_missing: "warning", unreachable: "critical", no_key: "critical", key_invalid: "critical" }[l.state] || "muted";
+    if (l.state && l.ok === false) warn.push(`<b>${esc(l.label)}</b> — ${esc(l.message)} <a href="#claude" data-go="claude">Document reader settings</a>`);
     $("#statusStrip").innerHTML = `
       <div class="strip-row">
-        <div><b>${st.running ? esc(st.message || "Syncing…") : "Sync idle"}</b>${st.running && st.current_file ? ` <span class="muted">— ${esc(st.current_file)}</span>` : ""}${!st.running && st.last_finished_at ? ` <span class="muted">— last finished ${when(st.last_finished_at)}</span>` : ""}</div>
+        <div><b>${st.running ? esc(st.message || "Syncing…") : "Sync idle"}</b> <span class="badge ${lcls}" title="${esc(l.message || "")}">${esc(l.label || "AI: checking…")}</span>${st.running && st.current_file ? ` <span class="muted">— ${esc(st.current_file)}</span>` : ""}${!st.running && st.last_finished_at ? ` <span class="muted">— last finished ${when(st.last_finished_at)}</span>` : ""}</div>
         <div class="muted small">${Object.entries(c).map(([k, v]) => `${label(k)}: ${v}`).join(" · ") || "no documents yet"}</div>
         <div class="actions"><button class="btn primary sm" id="syncAllBtn" ${st.running || !s.llm_ready ? "disabled" : ""}>Sync all sources</button> <button class="btn sm" id="watchNowBtn" ${st.running || !s.llm_ready ? "disabled" : ""} title="Ask SharePoint / Google Drive for changes right now">Check for changes</button>${st.running ? ` <button class="btn sm" id="stopSyncBtn" ${st.stop_requested ? "disabled" : ""} title="Finish the files being read now, then stop. Nothing already read is lost.">${st.stop_requested ? "Stopping…" : "Stop"}</button>` : ""}</div>
       </div>
@@ -205,17 +208,45 @@
     $("#keyStatus").innerHTML = s.has_api_key ? `<span class="ok">Key saved (${esc(s.anthropic_api_key_masked)})${ollama ? " — used only as the fallback" : ""}</span>`
       : ollama ? `<span class="muted">No key saved — not needed while the provider is Ollama (only for LLM_PROVIDER=claude or LLM_FALLBACK=1)</span>`
       : `<span class="missing">No key saved — syncing and Ask are disabled</span>`;
-    const who = ollama ? `<b>Ollama</b> · model <code>${esc(s.llm_model)}</code> at <code>${esc(s.llm_url)}</code>${s.llm_fallback ? " · Claude fallback on" : ""}`
-      : `<b>Claude API</b> · model <code>${esc(s.llm_model)}</code>`;
-    $("#llmCard").innerHTML = `<div class="strip-row"><div>Document reader: ${who} <span class="muted small">(set by LLM_PROVIDER in .env)</span></div>
-      <div><button class="btn sm" id="llmCheckBtn">${ollama ? "Check Ollama" : "Check Claude"}</button></div></div><div class="small muted" id="llmStatus"></div>`;
+    const l = (state.overview && state.overview.sync && state.overview.sync.llm) || {};
+    const lcls = { connected: "good", ready: "good", model_missing: "warning", unreachable: "critical", no_key: "critical", key_invalid: "critical" }[l.state] || "muted";
+    const readBy = Object.entries((state.overview && state.overview.sync && state.overview.sync.read_by) || {});
+    const statusLine = (r) => `<span class="badge ${{ connected: "good", ready: "good", model_missing: "warning", unreachable: "critical", no_key: "critical", key_invalid: "critical" }[r.state] || "muted"}">${esc(r.label || "Checking…")}</span>
+      <span class="${r.ok ? "ok" : r.ok === false ? "missing" : "muted"}">${esc(r.message || "")}</span>${r.checked_at ? ` <span class="muted">· checked ${when(r.checked_at)}</span>` : ""}
+      ${r.models ? `<br><span class="muted">Installed models on the Ollama PC: ${esc(r.models.join(", ") || "none")}</span>` : ""}${r.probe ? ` <span class="muted">· probe answered “${esc(r.probe)}”</span>` : ""}`;
+    $("#llmCard").innerHTML = `
+      <div class="strip-row"><div><b>Document reader</b> — ${ollama ? `Ollama, your own AI server: model <code>${esc(s.llm_model)}</code> at <code>${esc(s.llm_url)}</code>` : `Claude API (Anthropic): model <code>${esc(s.llm_model)}</code>`}</div>
+        <div><button class="btn sm" id="llmCheckBtn">Check now</button></div></div>
+      <div class="small" id="llmStatus" style="margin:6px 0 10px">${statusLine(l)}</div>
+      <div class="small" style="margin:0 0 12px">Figures in the ledger were read by: ${readBy.length ? readBy.map(([m, n]) => `<span class="chip">${esc(m.startsWith("ollama/") ? "Ollama " + m.slice(7) : m)}: ${n}</span>`).join(" ") : "nothing read yet"}</div>
+      <form id="llmForm" class="form">
+        <div class="grid two">
+          <label>Read documents with
+            <select name="llm_provider">
+              <option value="ollama">Ollama — the internal AI on your network (private, no API cost; text documents only)</option>
+              <option value="claude">Claude API — Anthropic (also reads photos and scanned PDFs; uses API credit)</option>
+            </select></label>
+          <label class="check"><input type="checkbox" name="llm_fallback"> Use Claude as the fallback: when Ollama is unreachable, or a file is a photo / scanned PDF (needs the Claude key below)</label>
+        </div>
+        <div class="actions"><button class="btn primary" type="submit">Save reader</button><span class="muted small" id="llmSaved"></span>
+          <span class="muted small">Default comes from <code>LLM_PROVIDER</code> / <code>LLM_FALLBACK</code> in .env; the choice saved here wins.</span></div>
+      </form>`;
+    $('#llmForm [name="llm_provider"]').value = s.llm_provider;
+    $('#llmForm [name="llm_fallback"]').checked = !!s.llm_fallback;
+    $("#llmForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const body = { llm_provider: $('#llmForm [name="llm_provider"]').value, llm_fallback: $('#llmForm [name="llm_fallback"]').checked };
+      try { await api("/api/admin/settings", { method: "PUT", body: JSON.stringify(body) }); toast(`Documents are now read with ${body.llm_provider === "ollama" ? "Ollama" : "Claude"}`); setTimeout(load, 1500); }
+      catch (err) { toast(err.message, 6000); }
+    });
     $("#llmCheckBtn").addEventListener("click", async () => {
       const btn = $("#llmCheckBtn"); btn.disabled = true; btn.textContent = "Checking…";
       try {
         const r = await api("/api/admin/llm-check", { method: "POST" });
-        $("#llmStatus").innerHTML = `<span class="${r.ok ? "ok" : "missing"}">${esc(r.message)}</span>${r.models ? `<br><span class="muted">Installed models: ${esc(r.models.join(", ") || "none")}</span>` : ""}${r.fallback ? `<br><span class="muted">${esc(r.fallback)}</span>` : ""}`;
+        $("#llmStatus").innerHTML = statusLine(r);
+        if (state.overview && state.overview.sync) { state.overview.sync.llm = r; renderStatus(state.overview.sync, state.overview.settings); }
       } catch (err) { $("#llmStatus").innerHTML = `<span class="missing">${esc(err.message)}</span>`; }
-      btn.disabled = false; btn.textContent = ollama ? "Check Ollama" : "Check Claude";
+      btn.disabled = false; btn.textContent = "Check now";
     });
   }
   $("#showKeyBtn").addEventListener("click", () => { const i = $('#claudeForm [name="anthropic_api_key"]'); i.type = i.type === "password" ? "text" : "password"; $("#showKeyBtn").textContent = i.type === "password" ? "Show" : "Hide"; });

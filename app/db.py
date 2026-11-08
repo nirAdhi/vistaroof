@@ -565,6 +565,14 @@ def status_counts() -> dict[str, int]:
     return {r["status"]: r["n"] for r in rows}
 
 
+def model_counts() -> dict[str, int]:
+    """How many real documents each model has read (``ollama/qwen2.5:3b``: 12, ``claude-opus-5-5``: 300)."""
+    with connect() as conn:
+        rows = conn.execute("SELECT model, COUNT(*) AS n FROM documents WHERE status='done' AND source!='demo' AND model IS NOT NULL "
+                            "GROUP BY model ORDER BY n DESC").fetchall()
+    return {r["model"]: r["n"] for r in rows}
+
+
 _rev = 0  # bumped on every write that changes what the dashboard shows (single-process app)
 
 

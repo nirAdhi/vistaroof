@@ -235,7 +235,7 @@ def fresh_db():
         conn.execute("DELETE FROM sources")
         conn.execute("DELETE FROM sync_runs")
         conn.execute("DELETE FROM users")
-        conn.execute("DELETE FROM settings WHERE key IN ('anthropic_api_key', 'google_client_config', 'ms_client_config')")
+        conn.execute("DELETE FROM settings WHERE key IN ('anthropic_api_key', 'google_client_config', 'ms_client_config', 'llm_provider', 'llm_fallback')")
     settings.invalidate()
 
 

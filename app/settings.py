@@ -145,17 +145,29 @@ def has_api_key() -> bool:
     return looks_like_key(get("anthropic_api_key"))
 
 
+def llm_provider() -> str:
+    """``ollama`` or ``claude``: the value saved in Admin, else LLM_PROVIDER from .env."""
+    v = (get("llm_provider") or "").strip().lower()
+    return v if v in ("ollama", "claude") else config.LLM_PROVIDER
+
+
+def llm_fallback() -> bool:
+    """Should an Ollama setup hand files to Claude when it cannot read them / is unreachable? (Needs a key too.)"""
+    return get_bool("llm_fallback", config.LLM_FALLBACK)
+
+
 def llm_ready() -> bool:
     """Can documents be read at all? Ollama needs no key; Claude needs a saved key."""
-    return config.LLM_PROVIDER == "ollama" or has_api_key()
+    return llm_provider() == "ollama" or has_api_key()
 
 
 def llm_public() -> dict[str, Any]:
     """Provider summary for the UI (no secrets)."""
-    if config.LLM_PROVIDER == "ollama":
+    if llm_provider() == "ollama":
         return {"llm_provider": "ollama", "llm_model": config.OLLAMA_MODEL, "llm_url": config.OLLAMA_BASE_URL,
-                "llm_fallback": config.LLM_FALLBACK and has_api_key(), "llm_ready": True}
-    return {"llm_provider": "claude", "llm_model": get("extract_model"), "llm_url": "", "llm_fallback": False, "llm_ready": has_api_key()}
+                "llm_fallback": llm_fallback(), "llm_fallback_usable": llm_fallback() and has_api_key(), "llm_ready": True}
+    return {"llm_provider": "claude", "llm_model": get("extract_model"), "llm_url": "", "llm_fallback": llm_fallback(),
+            "llm_fallback_usable": False, "llm_ready": has_api_key()}
 
 
 def masked_key() -> str:

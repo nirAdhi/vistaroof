@@ -32,11 +32,11 @@ def _doc_line(d: dict[str, Any]) -> str:
 
 def answer(question: str, summary: dict[str, Any], docs: list[dict[str, Any]]) -> str:
     """Answer with the configured provider; Ollama gets as many recent rows as fit its context."""
-    if config.LLM_PROVIDER == "ollama":
+    if settings.llm_provider() == "ollama":
         try:
             return _answer(question, summary, docs, ollama_mode=True)
         except ApiUnavailable as exc:
-            if config.LLM_FALLBACK and settings.has_api_key():
+            if settings.llm_fallback() and settings.has_api_key():
                 log.warning("ask: %s — using Claude (LLM_FALLBACK)", exc)
                 return _answer(question, summary, docs, ollama_mode=False)
             raise

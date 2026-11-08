@@ -73,6 +73,7 @@ async def _lifespan(_app: FastAPI):
     else:
         log.info("PUBLIC_BASE_URL not set: running in local mode (cookies not marked Secure).")
     sync.start_scheduler()
+    llm.refresh_in_background()  # populate the "document reader" status without delaying start-up
     yield
 
 
@@ -332,7 +333,7 @@ def get_config(request: Request) -> dict[str, Any]:
     return {
         "company": settings.get("company_name"), "currency": settings.get("base_currency"), "model": settings.get("extract_model"),
         "has_api_key": settings.has_api_key(), "has_google_client": settings.google_client_config() is not None,
-        **settings.llm_public(),
+        **settings.llm_public(), "llm_status": llm.status(),
         "sources": srcs, "counts": db.status_counts(), "demo_loaded": demo.count() > 0,
         "watch_interval_seconds": settings.get_int("watch_interval_seconds", 120),
         "auto_sync_minutes": settings.get_int("auto_sync_minutes", 0), "role": current_role(request), "version": db.ledger_version(),
@@ -342,8 +343,8 @@ def get_config(request: Request) -> dict[str, Any]:
 
 @app.get("/api/version", dependencies=[Depends(require_login)])
 def version() -> dict[str, Any]:
-    """Polled by the dashboard: when this changes, new documents have arrived."""
-    return {"version": db.ledger_version(), "sync_running": sync.status()["running"]}
+    """Polled by the dashboard: when this changes, new documents have arrived. Carries the reader status for the header badge."""
+    return {"version": db.ledger_version(), "sync_running": sync.status()["running"], "llm": llm.status()}
 
 
 @app.get("/api/meta", dependencies=[Depends(require_login)])
@@ -728,6 +729,8 @@ class SettingsPatch(BaseModel):
     watch_interval_seconds: int | None = Field(None, ge=0, le=86400)
     anthropic_api_key: str | None = Field(None, max_length=300)
     cache_previews: bool | None = None  # keep viewable copies of files on the server (default off)
+    llm_provider: str | None = Field(None, max_length=10)  # ollama | claude (default from .env)
+    llm_fallback: bool | None = None  # Ollama → Claude for photos / scans / while Ollama is unreachable
 
 
 @app.put("/api/admin/settings", dependencies=[Depends(require_admin)])
@@ -742,6 +745,12 @@ def admin_update_settings(body: SettingsPatch) -> dict[str, Any]:
         if key and not settings.looks_like_key(key):
             raise HTTPException(400, "that does not look like a Claude API key")
         changes["anthropic_api_key"] = key
+    if "llm_provider" in changes:
+        changes["llm_provider"] = (changes["llm_provider"] or "").strip().lower()
+        if changes["llm_provider"] not in ("ollama", "claude"):
+            raise HTTPException(400, "the document reader must be 'ollama' or 'claude'")
+    if "llm_fallback" in changes:
+        changes["llm_fallback"] = "1" if changes["llm_fallback"] else "0"
     if "extract_effort" in changes and changes["extract_effort"] not in ("low", "medium", "high"):
         raise HTTPException(400, "effort must be low, medium or high")
     if "extract_model" in changes and changes["extract_model"] not in {m for m, _ in extract.MODELS}:
@@ -753,6 +762,8 @@ def admin_update_settings(body: SettingsPatch) -> dict[str, Any]:
     if "watch_interval_seconds" in changes and 0 < changes["watch_interval_seconds"] < 30:
         changes["watch_interval_seconds"] = 30  # keep Drive API usage reasonable
     settings.set_many(changes)
+    if {"llm_provider", "llm_fallback", "anthropic_api_key"} & changes.keys():
+        llm.refresh_in_background()  # the badge should reflect the new reader within seconds
     pub = settings.public()
     pub["watch_interval_seconds"] = settings.get_int("watch_interval_seconds", 120)
     return pub

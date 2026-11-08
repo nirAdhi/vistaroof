@@ -10,15 +10,16 @@ from __future__ import annotations
 import json
 import sys
 
-from . import config, llm
+from . import config, llm, settings
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    print(f"provider: {config.LLM_PROVIDER}")
-    if config.LLM_PROVIDER == "ollama":
+    prov = llm.provider()
+    print(f"provider: {prov}" + (f" (set in Admin; .env says {config.LLM_PROVIDER})" if prov != config.LLM_PROVIDER else ""))
+    if prov == "ollama":
         print(f"url:      {config.OLLAMA_BASE_URL}\nmodel:    {config.OLLAMA_MODEL}\nnum_ctx:  {max(config.OLLAMA_NUM_CTX, 8192)}"
-              f"\ntimeout:  {config.OLLAMA_TIMEOUT:g}s\nkeep:     {config.OLLAMA_KEEP_ALIVE}\nfallback: {'Claude' if config.LLM_FALLBACK else 'off'}")
+              f"\ntimeout:  {config.OLLAMA_TIMEOUT:g}s\nkeep:     {config.OLLAMA_KEEP_ALIVE}\nfallback: {'Claude' if settings.llm_fallback() else 'off'}")
     h = llm.health()
     print(f"\n{'OK' if h['ok'] else 'FAILED'}: {h.get('message')}")
     if h.get("models"):

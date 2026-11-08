@@ -36,7 +36,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from . import db, extract, settings
+from . import db, extract, llm, settings
 from .sources import SUPPORTED_MIMES, FileMeta, open_source
 
 log = logging.getLogger(__name__)
@@ -60,6 +60,8 @@ def status() -> dict[str, Any]:
     snap["counts"] = db.status_counts()
     snap["runs"] = db.last_runs(8)
     snap["version"] = db.ledger_version()
+    snap["llm"] = llm.status()          # is the document reader (Ollama / Claude) usable right now?
+    snap["read_by"] = db.model_counts()  # which model produced the figures
     return snap
 
 
@@ -323,6 +325,7 @@ def process_uploaded(src: dict[str, Any], files: list[tuple[str, bytes, str]]) -
 # ------------------------------------------------------------------ watcher / scheduler
 
 _scheduler_started = False
+LLM_STATUS_EVERY = 60  # seconds between checks of the document reader (Ollama reachability)
 
 
 def check_for_changes() -> list[int]:
@@ -361,11 +364,15 @@ def start_scheduler() -> None:
 
     def loop() -> None:
         last_watch = last_full = time.monotonic()
+        last_llm = -LLM_STATUS_EVERY  # first check right away
         while True:
             time.sleep(15)
             try:
-                if not settings.llm_ready():
-                    continue
+                if time.monotonic() - last_llm >= LLM_STATUS_EVERY:
+                    last_llm = time.monotonic()
+                    llm.refresh_status()  # keeps the "Ollama connected / unreachable" badge current
+                if not settings.llm_ready() or not llm.status().get("ok", True):
+                    continue  # nothing to read with; the watcher would only produce failed runs
                 watch_every = settings.get_int("watch_interval_seconds", 120)
                 if watch_every > 0 and time.monotonic() - last_watch >= watch_every and not _state["running"]:
                     last_watch = time.monotonic()

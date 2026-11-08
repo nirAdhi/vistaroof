@@ -262,7 +262,15 @@ tr.selected td { background: color-mix(in srgb, var(--accent) 12%, transparent);
 .modal.account { width: min(440px, calc(100% - 24px)); }
 /* signed-out: only the brand and the sign-in card are visible */
 body.signed-out .tabs, body.signed-out #uploadBtn, body.signed-out #syncBtn, body.signed-out #adminLink, body.signed-out #accountBtn,
-body.signed-out .drawer, body.signed-out .modal, body.signed-out .modal-backdrop { display: none !important; }
+body.signed-out #aiBadge, body.signed-out .drawer, body.signed-out .modal, body.signed-out .modal-backdrop { display: none !important; }
+/* header badge: which AI reads the documents and whether it is reachable (green / amber / red dot) */
+.ai-badge { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: var(--surface-2); color: var(--ink-2); white-space: nowrap; border: 1px solid var(--axis); }
+.ai-badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+.ai-badge.good::before { background: var(--good); } .ai-badge.warning::before { background: var(--warning); }
+.ai-badge.critical::before { background: var(--critical); animation: ai-pulse 1.2s ease-in-out infinite; }
+.ai-badge.critical { color: var(--critical); border-color: var(--critical); }
+@keyframes ai-pulse { 50% { opacity: 0.3; } }
 .hidden { display: none !important; }
 .users-table td, .users-table th { vertical-align: middle; }
 .users-table .actions { display: flex; gap: 6px; flex-wrap: wrap; }

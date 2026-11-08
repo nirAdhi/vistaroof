@@ -74,7 +74,12 @@ Checks:
 .venv\Scripts\python scripts\ollama_smoke.py     # end to end: a text invoice, a PDF receipt and an Excel statement
 ```
 
-The same check is behind the **Check Ollama** button under Admin → Claude API.
+The same check is behind the **Check now** button under Admin → Claude API, where the reader can
+also be switched between Ollama and Claude (and the Claude fallback turned on) without touching
+`.env`. The app re-checks the reader every minute: the dashboard header shows a badge (**AI: Ollama ·
+connected / UNREACHABLE / model missing**, or **AI: Claude · ready / no key**), the admin status
+strip shows the same, a toast announces every change, and the Sync & setup tab lists how many
+documents each model has read. Only the extracted figures are stored, never the files.
 
 ## Production
 

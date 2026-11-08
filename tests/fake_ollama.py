@@ -10,7 +10,7 @@ import json
 
 import httpx
 
-from app import config, ollama
+from app import config, ollama, settings
 
 CANNED = {
     "sales": {"category": "sales_invoice", "direction": "money_in", "confidence": 0.9, "reason": "Invoice issued by the company to a customer.",
@@ -73,8 +73,8 @@ class FakeOllama:
 
 
 def install_fake_ollama(monkeypatch, fake: FakeOllama) -> None:
-    """Switch the provider to Ollama and route app/ollama.py through the fake."""
-    monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
+    """Switch the provider to Ollama (as Admin would) and route app/ollama.py through the fake."""
+    settings.set_value("llm_provider", "ollama")
     monkeypatch.setattr(ollama, "build_http_client",
                         lambda timeout=None: httpx.Client(base_url=config.OLLAMA_BASE_URL, transport=fake.transport(), timeout=5))
 
