@@ -88,7 +88,7 @@ The reader is chosen under Admin → Document reader (default from `LLM_PROVIDER
 | | `ollama` (default) | `claude` | `gemini` |
 |---|---|---|---|
 | Where the content goes | A self-hosted Ollama server on your network; nothing leaves the LAN | The Anthropic API | The Google Gemini API |
-| Reads | Text PDFs, Excel, Word, text/CSV (text is extracted first, `app/textract.py`) | Everything, incl. photos and scanned PDFs | Everything, incl. photos and scanned PDFs |
+| Reads | Text PDFs, Excel, Word, text/CSV (text is extracted first, `app/textract.py`); photos and scanned PDFs too when `OLLAMA_VISION_MODEL` names a vision model (e.g. `qwen3-vl:2b`) | Everything, incl. photos and scanned PDFs | Everything, incl. photos and scanned PDFs |
 | Needs | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` (e.g. `qwen2.5:3b`) | A Claude key (Admin) | A Gemini key (Admin); model `auto` = newest Flash the key can use |
 | Prompt | Short prompt + flat JSON schema written for a 3B model | Full prompt + strict schema | Full prompt + response schema |
 | Client | `app/ollama.py` (native API over httpx) | Anthropic SDK | `app/gemini.py` (REST over httpx, key in a header) |
@@ -98,6 +98,7 @@ LLM_PROVIDER=ollama                          # ollama | claude | gemini
 LLM_FALLBACK=                                # second reader: claude | gemini | ollama, or empty
 OLLAMA_BASE_URL=http://192.168.0.183:11434   # the Ollama PC; keep it off the internet, it has no login
 OLLAMA_MODEL=qwen2.5:3b
+# OLLAMA_VISION_MODEL=qwen3-vl:2b   # optional: photos and scanned PDFs read locally too (ollama pull qwen3-vl:2b); images are shrunk to 1600 px
 # OLLAMA_NUM_CTX=8192  OLLAMA_TIMEOUT=180  OLLAMA_KEEP_ALIVE=30m
 # GEMINI_API_KEY=AIza...  GEMINI_MODEL=auto    (or paste the key in Admin, stored encrypted; auto = newest Flash model for the key)
 ```
@@ -138,7 +139,7 @@ docker compose up -d --build
 ## Development
 
 ```
-.venv\Scripts\python -m pytest tests        # 100 tests, no network (fake Claude, fake Ollama, fake Gemini, fake Drive, fake Graph, fake SMTP)
+.venv\Scripts\python -m pytest tests        # 103 tests, no network (fake Claude, fake Ollama, fake Gemini, fake Drive, fake Graph, fake SMTP)
 .venv\Scripts\python -m pip_audit           # dependency vulnerabilities
 .venv\Scripts\python -m bandit -r app -ll   # static analysis
 ```

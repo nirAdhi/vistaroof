@@ -42,7 +42,7 @@ and **anyone on the LAN** with respect to the Ollama server.
 
 | Reader | What leaves the server | Transport | Who sees it |
 |---|---|---|---|
-| **Ollama** (default) | Extracted *text* of the document (PDF text layer, Excel / Word rows, text files); never the file bytes, never photos | Plain HTTP on the LAN to `OLLAMA_BASE_URL` | Only the Ollama host. It has **no authentication**: it must be reachable from the app's network only, never from the internet |
+| **Ollama** (default) | Extracted *text* of the document (PDF text layer, Excel / Word rows, text files); never the file bytes. With `OLLAMA_VISION_MODEL` set, photos and the page pictures of scanned PDFs are sent as well (shrunk to 1600 px) | Plain HTTP on the LAN to `OLLAMA_BASE_URL` | Only the Ollama host. It has **no authentication**: it must be reachable from the app's network only, never from the internet |
 | **Claude** | The file itself (PDF, photo) or its text | HTTPS to api.anthropic.com | Anthropic, under its API data-processing terms |
 | **Gemini** | The file itself (PDF, photo) or its text | HTTPS to generativelanguage.googleapis.com, key in the `x-goog-api-key` header (never in the URL) | Google, under the Gemini API terms — see §4 about the free tier |
 | **Ask** (any reader) | Extracted rows and totals only, never files | as above | as above |

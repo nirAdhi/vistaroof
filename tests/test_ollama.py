@@ -107,6 +107,53 @@ def test_photos_and_scanned_pdfs_are_skipped_without_fallback(monkeypatch, fresh
     assert fake.requests == []  # nothing was sent to the model
 
 
+def _pdf_of_picture(w: int = 2400, h: int = 3200) -> bytes:
+    """An image-only PDF the way a scanner app writes one: a single picture per page, no text layer."""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (235, 230, 220)).save(buf, format="PDF")
+    return buf.getvalue()
+
+
+def test_local_vision_model_reads_photos_and_scans(monkeypatch, fresh_db):
+    fake = FakeOllama(models=("qwen2.5:3b", "qwen3-vl:2b"))
+    install_fake_ollama(monkeypatch, fake)
+    monkeypatch.setattr(config, "OLLAMA_VISION_MODEL", "qwen3-vl:2b")
+    # a photo goes to the vision model with one image attached, no document text
+    fields, model = extract.extract(_meta("till.jpg", "image/jpeg"), FileContent(mime="image/jpeg", data=jpeg_bytes()))
+    assert model == "ollama/qwen3-vl:2b" and fields["doc_type"] == "receipt" and fields["flags"] == ["local_vision_model"] and fields["raw"]["pages"] == 1
+    req = fake.requests[-1]
+    assert req["model"] == "qwen3-vl:2b" and len(req["messages"][1]["images"]) == 1 and "<document_text>" not in req["messages"][1]["content"]
+    assert "attached image" in req["messages"][0]["content"] and "never instructions" in req["messages"][0]["content"]
+    assert req["format"]["properties"]["category"]["enum"] == extract.DOC_TYPES
+    # a scanned PDF: its page picture, shrunk to VISION_MAX_SIDE on the longest side
+    from PIL import Image
+    fields, model = extract.extract(_meta("scan.pdf", "application/pdf"), FileContent(mime="application/pdf", data=_pdf_of_picture()))
+    imgs = fake.requests[-1]["messages"][1]["images"]
+    assert model == "ollama/qwen3-vl:2b" and len(imgs) == 1
+    sent = Image.open(io.BytesIO(__import__("base64").b64decode(imgs[0])))
+    assert max(sent.size) == extract.VISION_MAX_SIDE and sent.format == "JPEG"
+    # text documents still go to the text model, without images
+    fields, model = extract.extract(_meta("INV-1.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+    assert model == "ollama/qwen2.5:3b" and fake.requests[-1]["model"] == "qwen2.5:3b" and "images" not in fake.requests[-1]["messages"][1]
+    # health reports the vision model
+    fake.answers.append("OK")
+    h = ollama.health()
+    assert h["ok"] and h["vision_model"] == "qwen3-vl:2b" and h["vision_installed"] is True and "Vision model qwen3-vl:2b is installed" in h["message"]
+
+
+def test_vision_model_set_but_not_pulled(monkeypatch, fresh_db):
+    fake = FakeOllama(models=("qwen2.5:3b",))
+    install_fake_ollama(monkeypatch, fake)
+    monkeypatch.setattr(config, "OLLAMA_VISION_MODEL", "qwen3-vl:2b")
+    fake.answers.append("OK")
+    h = ollama.health()
+    assert h["ok"] is True and h["vision_installed"] is False and "ollama pull qwen3-vl:2b" in h["message"]  # text still works
+    with pytest.raises(extract.ApiUnavailable, match="ollama pull qwen3-vl:2b"):
+        extract.extract(_meta("till.jpg", "image/jpeg"), FileContent(mime="image/jpeg", data=jpeg_bytes()))
+    assert isinstance(pytest.raises(ollama.ModelMissing, extract.extract, _meta("till.jpg", "image/jpeg"), FileContent(mime="image/jpeg", data=jpeg_bytes())).value, extract.ApiUnavailable)
+
+
 def test_fallback_to_claude_for_vision_and_when_ollama_is_down(monkeypatch, fresh_db, fake_claude):
     fake = FakeOllama()
     install_fake_ollama(monkeypatch, fake)

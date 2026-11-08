@@ -83,10 +83,12 @@ def _options(num_predict: int) -> dict[str, Any]:
     return {"temperature": 0, "num_ctx": max(config.OLLAMA_NUM_CTX, 8192), "num_predict": num_predict}
 
 
-def chat(messages: list[dict[str, str]], *, schema: dict[str, Any] | None = None, num_predict: int = 1024) -> str:
-    """One ``/api/chat`` call; returns the assistant text. ``schema`` turns on constrained JSON output."""
+def chat(messages: list[dict[str, Any]], *, schema: dict[str, Any] | None = None, num_predict: int = 1024, model: str | None = None) -> str:
+    """One ``/api/chat`` call; returns the assistant text. ``schema`` turns on constrained JSON output.
+    ``model`` overrides OLLAMA_MODEL (the vision model). A user message may carry Ollama's native
+    ``"images": [<base64>, …]`` field next to its ``content``."""
     body: dict[str, Any] = {
-        "model": config.OLLAMA_MODEL, "messages": messages, "stream": False,
+        "model": model or config.OLLAMA_MODEL, "messages": messages, "stream": False,
         "options": _options(num_predict), "keep_alive": config.OLLAMA_KEEP_ALIVE,
     }
     if schema is not None:
@@ -100,7 +102,8 @@ def chat(messages: list[dict[str, str]], *, schema: dict[str, Any] | None = None
 parse_json_object = modelout.parse_json_object
 
 
-def chat_json(messages: list[dict[str, str]], schema: dict[str, Any], validate, *, num_predict: int = 1024) -> tuple[dict[str, Any], int]:
+def chat_json(messages: list[dict[str, Any]], schema: dict[str, Any], validate, *, num_predict: int = 1024,
+              model: str | None = None) -> tuple[dict[str, Any], int]:
     """``chat`` with JSON output, parsed and checked by ``validate(obj) -> obj``; retries on a bad answer.
 
     ``validate`` raises ValueError for anything it cannot accept. Up to MAX_JSON_RETRIES extra calls are
@@ -108,7 +111,7 @@ def chat_json(messages: list[dict[str, str]], schema: dict[str, Any], validate, 
     history = list(messages)
     last_error = ""
     for attempt in range(1, MAX_JSON_RETRIES + 2):
-        text = chat(history, schema=schema, num_predict=num_predict)
+        text = chat(history, schema=schema, num_predict=num_predict, model=model)
         try:
             return validate(parse_json_object(text)), attempt
         except ValueError as exc:
@@ -119,7 +122,7 @@ def chat_json(messages: list[dict[str, str]], schema: dict[str, Any], validate, 
                 {"role": "user", "content": f"That answer was not acceptable: {last_error}. Return only the JSON object, "
                                             "with exactly the required keys and allowed values."},
             ]
-    raise RuntimeError(f"Ollama ({config.OLLAMA_MODEL}) did not return a valid answer after {MAX_JSON_RETRIES + 1} attempts: {last_error}")
+    raise RuntimeError(f"Ollama ({model or config.OLLAMA_MODEL}) did not return a valid answer after {MAX_JSON_RETRIES + 1} attempts: {last_error}")
 
 
 # ------------------------------------------------------------------ health
@@ -150,6 +153,11 @@ def health(probe: bool = True) -> dict[str, Any]:
             out["probe"] = reply.strip()[:40]
         out["ok"] = True
         out["message"] = f"Ollama {out['version']} at {config.OLLAMA_BASE_URL}: model {config.OLLAMA_MODEL} is installed and answers."
+        if config.OLLAMA_VISION_MODEL:  # optional second model for photos / scans; missing it is a warning, not a failure
+            out["vision_model"] = config.OLLAMA_VISION_MODEL
+            out["vision_installed"] = model_installed(config.OLLAMA_VISION_MODEL, models)
+            out["message"] += (f" Vision model {config.OLLAMA_VISION_MODEL} is installed (photos and scanned PDFs)." if out["vision_installed"]
+                               else f" WARNING: vision model {config.OLLAMA_VISION_MODEL} is not installed — photos and scanned PDFs will fail until you run: ollama pull {config.OLLAMA_VISION_MODEL}")
     except ApiUnavailable as exc:
         out["message"] = str(exc)
     except Exception as exc:

@@ -33,7 +33,9 @@ LLM_FALLBACK      A second reader (``claude`` / ``gemini`` / ``ollama``; ``1`` =
                   first is unreachable, unfunded, or cannot read a photo / scanned PDF.
 GEMINI_API_KEY / GEMINI_MODEL   Google Gemini key (initial value; Admin stores it encrypted) and model.
 OLLAMA_BASE_URL   The Ollama server, e.g. ``http://192.168.0.183:11434`` (default: localhost).
-OLLAMA_MODEL      Model name as shown by ``ollama list`` (default ``qwen2.5:3b``).
+OLLAMA_MODEL      Model name as shown by ``ollama list`` (default ``qwen2.5:3b``), used for text documents.
+OLLAMA_VISION_MODEL  Optional vision model on the same Ollama server (e.g. ``qwen3-vl:2b``) that reads photos
+                  and scanned PDFs locally; empty = off, those files go to the fallback reader or are skipped.
 OLLAMA_NUM_CTX / OLLAMA_TIMEOUT / OLLAMA_KEEP_ALIVE   context tokens (min 8192), seconds, keep-alive.
 COMPANY_NAME etc. Initial defaults for settings, used only until changed in Admin.
 """
@@ -88,6 +90,7 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "auto").strip() or "auto"  # auto = new
 GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "180"))  # seconds to wait for an answer (large photos take longer)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip().rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b").strip()
+OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "").strip()  # "" = off: photos / scanned PDFs go to the fallback reader or are skipped
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))          # tokens of context the model is given (min 8192)
 OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "180"))         # seconds per request (the first call loads the model)
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m").strip()  # keep the model in memory between documents

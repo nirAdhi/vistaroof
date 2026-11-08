@@ -79,6 +79,32 @@ def pdf_to_text(data: bytes) -> str:
     return text
 
 
+def pdf_page_images(data: bytes, max_pages: int = 2) -> list:
+    """The page pictures of a scanned PDF (PIL images), first ``max_pages`` pages. Scanner and phone apps store
+    each page as one embedded picture, so pypdf can hand them over without a renderer. ValueError when none."""
+    from pypdf import PdfReader
+
+    out = []
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        for page in reader.pages[:max_pages]:
+            best = None
+            for img in page.images:
+                try:
+                    pil = img.image
+                except Exception:  # an undecodable embedded picture (unsupported filter): try the next one
+                    continue
+                if pil is not None and (best is None or pil.size[0] * pil.size[1] > best.size[0] * best.size[1]):
+                    best = pil
+            if best is not None:
+                out.append(best)
+    except Exception as exc:
+        raise ValueError(f"could not read the pictures in the PDF ({type(exc).__name__}: {str(exc)[:120]})") from exc
+    if not out:
+        raise ValueError("the PDF has no text layer and no readable page pictures")
+    return out
+
+
 def document_text(meta: FileMeta, content: FileContent) -> str:
     """The document as plain text, whatever the file type. ValueError / NeedsVision when impossible."""
     mime = content.mime

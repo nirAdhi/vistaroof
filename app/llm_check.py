@@ -19,7 +19,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"provider: {prov}" + (f" (set in Admin; .env says {config.LLM_PROVIDER})" if prov != config.LLM_PROVIDER else ""))
     if prov == "ollama":
         print(f"url:      {config.OLLAMA_BASE_URL}\nmodel:    {config.OLLAMA_MODEL}\nnum_ctx:  {max(config.OLLAMA_NUM_CTX, 8192)}"
-              f"\ntimeout:  {config.OLLAMA_TIMEOUT:g}s\nkeep:     {config.OLLAMA_KEEP_ALIVE}")
+              f"\ntimeout:  {config.OLLAMA_TIMEOUT:g}s\nkeep:     {config.OLLAMA_KEEP_ALIVE}"
+              f"\nvision:   {config.OLLAMA_VISION_MODEL or 'off (photos / scans need the fallback reader)'}")
     print(f"model:    {settings.provider_model(prov)}" if prov != "ollama" else "", end="\n" if prov != "ollama" else "")
     print(f"fallback: {settings.llm_fallback_provider() or 'off'}")
     h = llm.health()
