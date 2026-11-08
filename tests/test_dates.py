@@ -44,6 +44,20 @@ def test_repair_fills_dates_from_stored_answers_without_touching_edits(admin, fr
     assert repair.repair_dates() == {"checked": 1, "updated": 0}  # idempotent: only the hopeless one is left
 
 
+def test_unusually_large_amounts_are_listed_for_attention(admin, fresh_db):
+    for i, amount in enumerate((120.0, 450.0, 2300.0, 980.0)):
+        _stored(f"normal-{i}.pdf", "2026-03-10", None, {}) and db.save_extraction(
+            db.upsert_file_metadata(FileMeta("local", 1, f"n:{i}", f"normal-{i}.pdf", "application/pdf", "Docs", "", 10, "2026-03-10T00:00:00+00:00").as_dict()),
+            {"doc_type": "supplier_invoice", "direction": "money_out", "treatment": "expense", "sign": 1, "total": amount, "net_amount": amount, "issue_date": "2026-03-10"}, "m")
+    big_id = db.upsert_file_metadata(FileMeta("local", 1, "n:big", "Account Balance Aug 2026.pdf", "application/pdf", "Docs", "", 10, "2026-03-12T00:00:00+00:00").as_dict())
+    db.save_extraction(big_id, {"doc_type": "supplier_invoice", "direction": "money_out", "treatment": "expense", "sign": 1, "total": 2_561_276.0,
+                                "net_amount": 2_561_276.0, "issue_date": "2026-03-12"}, "m")
+    att = admin.get("/api/summary?from=2026-03-01&to=2026-03-31").json()["attention"]
+    assert [o["id"] for o in att["outliers"]] == [big_id] and att["outlier_threshold"] >= 50_000
+    # a genuinely large but plausible job (below the floor) is not an outlier
+    assert admin.get("/api/summary?from=2026-01-01&to=2026-01-31").json()["attention"]["outliers"] == []
+
+
 def test_documents_list_and_summary_agree_on_the_period(admin, fresh_db):
     _stored("dated-march.pdf", "2026-03-10", None, {})
     _stored("undated-filed-in-may.pdf", None, None, {})  # placed by its file date, 2026-05-01

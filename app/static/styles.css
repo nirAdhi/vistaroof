@@ -111,8 +111,11 @@ main { padding: 0 16px 48px; max-width: 1400px; margin: 0 auto; }
 
 /* ---------- stat tiles ---------- */
 .tile .label { color: var(--ink-2); font-size: 12px; margin-bottom: 6px; }
-.tile .value { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
+/* Money never wraps (a browser may break after the minus sign) and shrinks with its length instead of overflowing the tile. */
+.tile .value { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; white-space: nowrap; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
 .tile.hero .value { font-size: 40px; }
+.tile .value.long { font-size: 20px; } .tile.hero .value.long { font-size: 30px; }
+.tile .value.xlong { font-size: 17px; } .tile.hero .value.xlong { font-size: 24px; }
 .tile .delta { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .tile .bar { height: 6px; border-radius: 3px; background: var(--grid); margin-top: 10px; overflow: hidden; }
 .tile .bar > i { display: block; height: 100%; border-radius: 3px; }

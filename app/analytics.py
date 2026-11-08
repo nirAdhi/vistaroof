@@ -21,6 +21,8 @@ from typing import Any
 from . import settings
 
 OPEN_STATUSES = {"unpaid", "partial", "overdue", "unknown"}
+OUTLIER_FLOOR = 50_000.0   # below this an amount is never called an outlier (a roofing job can cost that)
+OUTLIER_FACTOR = 10.0      # ... above it, when it is also 10× the period's median document amount
 
 
 def _eff_date(d: dict[str, Any]) -> str | None:
@@ -197,6 +199,13 @@ def compute(docs: list[dict[str, Any]], date_from: str | None, date_to: str | No
     currencies = sorted({d.get("currency") for d in dated if d.get("currency")} - {settings.get("base_currency"), None})
     low_conf = [d for d in dated if (d.get("confidence") or 1) < 0.6]
     flagged = [d for d in dated if d.get("flags")]
+    # Outliers: a reference number or a statement balance read as a total can swamp every figure on the
+    # dashboard. Anything far above the period's typical amount is listed so the owner can check it.
+    money_docs = [d for d in rev_docs + exp_docs if (d.get("net_amount") or 0) > 0]
+    amounts = sorted(abs(d["net_amount"]) for d in money_docs)
+    median = amounts[len(amounts) // 2] if amounts else 0.0
+    outlier_threshold = max(OUTLIER_FLOOR, median * OUTLIER_FACTOR)
+    outliers = sorted((d for d in money_docs if abs(d["net_amount"]) >= outlier_threshold and len(amounts) >= 3), key=lambda d: -abs(d["net_amount"]))
 
     def brief(d):
         return {
@@ -239,6 +248,8 @@ def compute(docs: list[dict[str, Any]], date_from: str | None, date_to: str | No
             "other_currencies": currencies,
             "low_confidence": [brief(d) for d in low_conf][:50],
             "flagged": [brief(d) for d in flagged][:100],
+            "outliers": [brief(d) for d in outliers][:10],
+            "outlier_threshold": _r(outlier_threshold),
         },
     }
 

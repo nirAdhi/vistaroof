@@ -271,7 +271,9 @@
   // ------------------------------------------------------------ tiles
   function tile({ label: l, value, sub, cls = "", color, pct, onClick }) {
     const bar = pct != null ? `<div class="bar"><i style="width:${Math.max(0, Math.min(100, pct))}%;background:${color || "var(--accent)"}"></i></div>` : "";
-    return `<div class="card tile ${cls} ${onClick ? "clickable" : ""}" ${onClick ? `data-go="${onClick}"` : ""}><div class="label">${esc(l)}</div><div class="value ${value < 0 ? "neg" : ""}">${typeof value === "number" ? money(value, false) : esc(value)}</div>${sub ? `<div class="delta">${sub}</div>` : ""}${bar}</div>`;
+    const shown = typeof value === "number" ? money(value, false) : String(value ?? "");
+    const size = shown.length > 12 ? "xlong" : shown.length > 9 ? "long" : "";  // €12,345,678 and the like must not spill out of the tile
+    return `<div class="card tile ${cls} ${onClick ? "clickable" : ""}" ${onClick ? `data-go="${onClick}"` : ""}><div class="label">${esc(l)}</div><div class="value ${value < 0 ? "neg" : ""} ${size}" title="${esc(shown)}">${typeof value === "number" ? shown : esc(shown)}</div>${sub ? `<div class="delta">${sub}</div>` : ""}${bar}</div>`;
   }
 
   function statusChip(s) { return s ? `<span class="status ${esc(s)}">${label(s)}</span>` : "—"; }
@@ -495,6 +497,7 @@
     const items = [];
     if (overdueR.length) items.push(`<li><b class="neg">${overdueR.length} overdue customer invoice${overdueR.length > 1 ? "s" : ""}</b> worth ${money(t.overdue_receivables, false)} — ${overdueR.slice(0, 3).map((d) => `${esc(d.counterparty || d.name)} (${money(d.outstanding, false)})`).join(", ")}${overdueR.length > 3 ? "…" : ""}</li>`);
     if (overdueP.length) items.push(`<li><b class="neg">${overdueP.length} overdue supplier bill${overdueP.length > 1 ? "s" : ""}</b> worth ${money(t.overdue_payables, false)} — ${overdueP.slice(0, 3).map((d) => `${esc(d.counterparty || d.name)} (${money(d.outstanding, false)})`).join(", ")}${overdueP.length > 3 ? "…" : ""}</li>`);
+    if (att.outliers && att.outliers.length) items.push(`<li><b class="neg">${att.outliers.length} document${att.outliers.length > 1 ? "s" : ""} with unusually large amounts</b> (over ${money(att.outlier_threshold, false)} — far above the rest of this period). A statement balance or a reference number may have been read as a total; open and correct them: ${att.outliers.slice(0, 5).map((d) => `${docLink(d)} (${money(d.total, false)})`).join(", ")}${att.outliers.length > 5 ? "…" : ""}</li>`);
     if (att.other_currencies.length) items.push(`<li>Documents in other currencies (${att.other_currencies.join(", ")}) are added without conversion.</li>`);
     if (att.low_confidence.length) items.push(`<li>${att.low_confidence.length} document${att.low_confidence.length > 1 ? "s" : ""} read with low confidence — worth a quick check: ${att.low_confidence.slice(0, 3).map(docLink).join(", ")}${att.low_confidence.length > 3 ? "…" : ""}</li>`);
     if (att.flagged.length) items.push(`<li>${att.flagged.length} document${att.flagged.length > 1 ? "s" : ""} flagged by the reader (poor scans, mismatched totals, etc.).</li>`);
