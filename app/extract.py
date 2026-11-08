@@ -95,6 +95,17 @@ TREATMENTS: dict[tuple[str, str], tuple[str, int]] = {
     ("expense_claim", "money_out"): ("expense", 1),
 }
 
+
+def default_direction(doc_type: str) -> str:
+    """The usual money direction for a type, used when a person enters a document by hand and leaves
+    direction blank (a sales invoice is money in, a supplier invoice or receipt money out)."""
+    if doc_type in ("sales_invoice", "proforma_invoice", "quote_estimate", "credit_note", "remittance_advice"):
+        return "money_in"
+    if doc_type in ("supplier_invoice", "purchase_order", "receipt", "payslip", "expense_claim"):
+        return "money_out"
+    return "none"
+
+
 TREATMENT_LABELS = {
     "revenue": "Revenue (sales)",
     "expense": "Expense (cost)",
@@ -721,8 +732,9 @@ def extract(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
         if fb:
             log.info("%s: %s — handing it to %s (fallback reader)", meta.name, exc, fb)
             return _with_fallback(fb, meta, content)
-        raise ValueError(f"{NEEDS_VISION_PREFIX}: {exc} — the text-only model ({config.OLLAMA_MODEL}) cannot read it. Choose Claude or "
-                         "Gemini as the fallback reader in Admin → Document reader (needs that key); the next sync then reads this file.") from exc
+        raise ValueError(f"{NEEDS_VISION_PREFIX}: {exc} — the text-only model ({config.OLLAMA_MODEL}) cannot read it. Set OLLAMA_VISION_MODEL, "
+                         "or choose Claude or Gemini as the fallback reader in Admin → Document reader (needs that key), and the next sync reads this file; "
+                         "or open it and enter the figures by hand.") from exc
     except ApiUnavailable as exc:
         if fb:
             log.warning("%s: %s — handing it to %s (fallback reader)", meta.name, exc, fb)

@@ -391,7 +391,7 @@
     const open = new Set(["unpaid", "partial", "overdue", "unknown"]);
     const outstanding = (d.doc_type === "sales_invoice" || d.doc_type === "supplier_invoice") && open.has(d.payment_status) ? Math.max((d.total || d.net_amount || 0) - (d.amount_paid || 0), 0) : null;
     const row = (l, v) => v == null || v === "" ? "" : `<dt>${l}</dt><dd>${v}</dd>`;
-    if (d.status !== "done") return `<div class="note"><b>${label(d.status)}</b>${d.error ? ` — ${esc(d.error)}` : d.status === "pending" ? " — not read yet. Run a sync." : ""}</div>`;
+    if (d.status !== "done") return `<div class="note"><b>${label(d.status)}</b>${d.error ? ` — ${esc(d.error)}` : d.status === "pending" ? " — not read yet. Run a sync." : ""}${d.source !== "demo" && d.status !== "processing" ? `<br><br>Can you read it yourself? Use <b>Enter by hand</b> to type the figures in while looking at the file; they count in the dashboard immediately.` : ""}</div>`;
     const items = (d.line_items || []).length ? `<h4>Line items</h4>${tableHtml([
       { key: "description", label: "Description" }, { key: "quantity", label: "Qty", num: true, render: (r) => r.quantity ?? "" },
       { key: "unit_price", label: "Unit", num: true, render: (r) => r.unit_price != null ? money(r.unit_price) : "" },
@@ -441,7 +441,7 @@
           ${n > 1 ? `<button class="btn sm" id="viewerPrev" ${i <= 0 ? "disabled" : ""}>‹ Previous</button><button class="btn sm" id="viewerNext" ${i >= n - 1 ? "disabled" : ""}>Next ›</button>` : ""}
           <a class="btn sm" href="/api/documents/${d.id}/preview" target="_blank" rel="noopener">Open full size</a>
           ${d.web_link ? `<a class="btn sm" href="${esc(d.web_link)}" target="_blank" rel="noopener">${openWhere(d)}</a>` : ""}
-          <button class="btn sm" id="viewerDetails">Edit details</button>
+          <button class="btn sm ${d.status !== "done" && d.source !== "demo" ? "primary" : ""}" id="viewerDetails">${d.status !== "done" && d.source !== "demo" ? "Enter by hand" : "Edit details"}</button>
           <button class="icon-btn" id="viewerClose" aria-label="Close">✕</button>
         </div>
       </div>
@@ -780,9 +780,10 @@
       { key: "payment_status", label: "Paid?", render: (r) => r.payment_status && r.payment_status !== "not_applicable" ? statusChip(r.payment_status) : "" },
       { key: "net_amount", label: "Net", num: true, render: (r) => r.net_amount != null ? money(r.net_amount) : "" },
       { key: "total", label: "Total", num: true, render: (r) => r.total != null ? money(r.total) : "" },
-      { key: "confidence", label: "", render: (r) => (r.overridden ? `<span class="chip" title="Edited by hand">edited</span> ` : "") + (r.flags && r.flags.length ? `<span class="flag" title="${esc(r.flags.join(", "))}">⚑</span> ` : "") + previewBtn(r) },
+      { key: "confidence", label: "", render: (r) => (r.status !== "done" && r.status !== "processing" && r.source !== "demo" ? `<button class="btn sm" data-manual="${r.id}" title="${esc(r.error || "Not read")} — type the figures in yourself">Enter by hand</button> ` : "") + (r.overridden ? `<span class="chip" title="${r.model === "manual" ? "Figures entered by hand" : "Edited by hand"}">${r.model === "manual" ? "by hand" : "edited"}</span> ` : "") + (r.flags && r.flags.length ? `<span class="flag" title="${esc(r.flags.join(", "))}">⚑</span> ` : "") + previewBtn(r) },
     ], state.docs, { rowAttr: (r) => `class="row-link" data-id="${r.id}"`, empty: "No documents match" });
     $$("#docTable tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openDoc(+tr.dataset.id)));
+    $$("#docTable [data-manual]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openDoc(+b.dataset.manual); }));
     bindPreviews($("#docTable"), state.docs); bindCompanies($("#docTable"));
   }
   let searchTimer;
@@ -817,8 +818,18 @@
   async function openDoc(id) {
     const d = await api(`/api/documents/${id}`);
     const m = state.meta;
-    const opt = (list, cur, allowNull = true) => (allowNull ? `<option value="">—</option>` : "") + list.map((v) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(label(v))}</option>`).join("");
-    const field = (name, type = "text") => `<input name="${name}" type="${type}" value="${esc(d[name] ?? "")}" ${type === "number" ? 'step="0.01"' : ""}>`;
+    const manual = d.status !== "done" && d.source !== "demo";  // nothing was read: the person types the figures in while looking at the file
+    const opt = (list, cur, allowNull = true, placeholder = "—") => (allowNull ? `<option value="">${placeholder}</option>` : "") + list.map((v) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(label(v))}</option>`).join("");
+    const field = (name, type = "text", ph = "") => `<input name="${name}" type="${type}" value="${esc(d[name] ?? "")}" ${type === "number" ? 'step="0.01"' : ""} ${ph ? `placeholder="${esc(ph)}"` : ""}>`;
+    const reason = d.error ? ` — ${esc(d.error.replace(/\.\s*$/, ""))}` : "";
+    const why = d.status === "skipped" ? `The reader skipped this file${reason}.`
+      : d.status === "error" ? `The reader could not read this file${reason}.`
+      : d.status === "processing" ? "This file is being read right now." : "This file has not been read yet.";
+    const manualPanel = manual ? `
+      <div class="note manual" style="margin-top:12px">
+        <b>${d.status === "processing" ? "Being read" : "Enter this document by hand"}</b> — ${why}
+        ${d.status === "processing" ? "" : `<br>Handwritten or faint documents are often quicker to type in than to keep re-reading: look at the file below, fill in what it is and the amounts, then <b>Save</b>. The figures count in the dashboard straight away, are marked “entered by hand” and are never overwritten by a sync. If it is not a financial document at all (a note, a photo of the site), choose <b>Not a financial document</b> and it leaves the skipped list without counting anything.`}
+      </div>` : "";
     const items = (d.line_items || []).length ? `<h3 style="font-size:13px;margin:14px 0 6px">Line items</h3>${tableHtml([
       { key: "description", label: "Description" }, { key: "quantity", label: "Qty", num: true, render: (r) => r.quantity ?? "" },
       { key: "unit_price", label: "Unit", num: true, render: (r) => r.unit_price != null ? money(r.unit_price) : "" },
@@ -828,41 +839,48 @@
         <div><h2>${esc(d.name)}</h2><div class="muted small">${esc(d.folder || "")} · ${d.size ? (d.size / 1024).toFixed(0) + " KB" : ""} · modified ${esc((d.modified_at || "").slice(0, 10))}</div></div>
         <button class="icon-btn" id="drawerClose" aria-label="Close">✕</button>
       </div>
-      ${d.status !== "done" ? `<div class="note" style="margin-top:12px"><b>${label(d.status)}</b>${d.error ? ` — ${esc(d.error)}` : ""}</div>` : ""}
+      ${manual ? manualPanel : d.status !== "done" ? `<div class="note" style="margin-top:12px"><b>${label(d.status)}</b>${d.error ? ` — ${esc(d.error)}` : ""}</div>` : ""}
       <iframe class="preview-frame" src="/api/documents/${d.id}/preview?embed=1" title="Preview of ${esc(d.name)}" loading="lazy"></iframe>
       <div class="small"><button class="link-btn" id="drawerPreview">Open large preview</button>${d.web_link ? ` · <a href="${esc(d.web_link)}" target="_blank" rel="noopener">${openWhere(d)}</a>` : ""}${d.counterparty ? ` · <button class="link-btn" data-company="${esc(d.counterparty)}">All documents from ${esc(d.counterparty)}</button>` : ""}${d.source === "demo" ? ` · <span class="muted">sample rendering of demo data</span>` : ""}</div>
       ${d.summary ? `<p style="margin:12px 0 4px">${esc(d.summary)}</p>` : ""}
       <div class="flagline">${d.treatment ? treatmentChip(d.treatment) : ""}${d.confidence != null ? `<span class="chip">confidence ${(d.confidence * 100).toFixed(0)}%</span>` : ""}${(d.flags || []).map((f) => `<span class="flag">${esc(label(f))}</span>`).join("")}${d.overridden ? `<span class="chip">edited by hand</span>` : ""}</div>
       <form id="docForm">
       <dl class="kv">
-        <dt>Type</dt><dd><select name="doc_type">${opt(m.doc_types, d.doc_type, false)}</select></dd>
-        <dt>Direction</dt><dd><select name="direction">${opt(m.directions, d.direction, false)}</select></dd>
-        <dt>Counterparty</dt><dd>${field("counterparty")}</dd>
+        <dt>Type${manual ? " *" : ""}</dt><dd><select name="doc_type" ${manual ? "required" : ""}>${opt(m.doc_types, d.doc_type, manual, "Choose what this document is…")}</select></dd>
+        <dt>Direction</dt><dd><select name="direction">${opt(m.directions, d.direction, manual, "Usual for the type (sales invoice = money in, receipt = money out)")}</select></dd>
+        <dt>Counterparty</dt><dd>${field("counterparty", "text", manual ? "Customer or supplier name" : "")}</dd>
         <dt>Role</dt><dd><select name="counterparty_role">${opt(["customer", "supplier", "employee", "authority", "bank", "other"], d.counterparty_role)}</select></dd>
         <dt>Number</dt><dd>${field("document_number")}</dd>
         <dt>Issue date</dt><dd>${field("issue_date", "date")}</dd>
         <dt>Due date</dt><dd>${field("due_date", "date")}</dd>
-        <dt>Currency</dt><dd>${field("currency")}</dd>
-        <dt>Net (ex VAT)</dt><dd>${field("subtotal", "number")}</dd>
+        <dt>Currency</dt><dd>${field("currency", "text", manual ? "EUR" : "")}</dd>
+        <dt>Net (ex VAT)</dt><dd>${field("subtotal", "number", manual ? "leave blank to work it out from the total" : "")}</dd>
         <dt>VAT</dt><dd>${field("vat_amount", "number")}</dd>
-        <dt>Total</dt><dd>${field("total", "number")}</dd>
+        <dt>Total</dt><dd>${field("total", "number", manual ? "amount including VAT" : "")}</dd>
         <dt>Amount paid</dt><dd>${field("amount_paid", "number")}</dd>
-        <dt>Payment status</dt><dd><select name="payment_status">${opt(m.payment_statuses, d.payment_status, false)}</select></dd>
+        <dt>Payment status</dt><dd><select name="payment_status">${opt(m.payment_statuses, d.payment_status, manual, "Unknown")}</select></dd>
         <dt>Category</dt><dd><select name="category"><option value="">—</option><optgroup label="Income">${m.income_categories.map((v) => `<option value="${v}" ${v === d.category ? "selected" : ""}>${label(v)}</option>`).join("")}</optgroup><optgroup label="Costs">${m.expense_categories.map((v) => `<option value="${v}" ${v === d.category ? "selected" : ""}>${label(v)}</option>`).join("")}</optgroup></select></dd>
         <dt>Job / site</dt><dd>${field("project")}</dd>
         <dt>Summary</dt><dd><textarea name="summary">${esc(d.summary || "")}</textarea></dd>
       </dl>
       <div class="actions">
-        <button class="btn primary" type="submit">Save changes</button>
+        <button class="btn primary" type="submit">${manual ? "Save figures entered by hand" : "Save changes"}</button>
+        ${manual ? `<button class="btn" type="button" id="notFinancialBtn" title="Mark as a non-financial file (note, photo, letter): it stops showing as skipped and counts nothing">Not a financial document</button>` : ""}
         ${d.web_link ? `<a class="btn" href="${esc(d.web_link)}" target="_blank" rel="noopener">${openWhere(d)}</a>` : ""}
         ${d.source !== "demo" ? `<span class="inline" style="display:inline-flex;gap:6px;align-items:center"><select id="reprocessWith" title="Which reader to use for this file">${readerOptions(d)}</select><button class="btn" type="button" id="reprocessBtn">Re-read</button></span>` : ""}
       </div>
       </form>
       ${items}
-      <p class="muted small" style="margin-top:16px">Saved changes are kept even when the file is re-synced. “Re-read” discards them and extracts the file again with the reader you pick — useful for a photo or scan that the text-only Ollama model skipped: send just that file to Claude or Gemini.</p>`;
+      <p class="muted small" style="margin-top:16px">${manual
+        ? "Figures saved by hand are kept even when the file is re-synced. If you would rather let a model try, “Re-read” sends just this file to the reader you pick (Claude and Gemini read photos and scans; Ollama needs its vision model for those)."
+        : "Saved changes are kept even when the file is re-synced. “Re-read” discards them and extracts the file again with the reader you pick — useful for a photo or scan that the text-only Ollama model skipped: send just that file to Claude or Gemini."}</p>`;
     $("#drawerClose").addEventListener("click", closeDrawer);
     const dp = $("#drawerPreview"); if (dp) dp.addEventListener("click", () => openPreview(d));
     bindCompanies(drawer);
+    const savePatch = async (patch, okMsg) => {
+      try { await api(`/api/documents/${id}`, { method: "PATCH", body: JSON.stringify(patch) }); toast(okMsg); closeDrawer(); await refresh(); }
+      catch (err) { toast("Save failed: " + err.message, 6000); }
+    };
     $("#docForm").addEventListener("submit", async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target); const patch = {};
@@ -870,9 +888,15 @@
         if (["subtotal", "vat_amount", "total", "amount_paid"].includes(k)) patch[k] = v === "" ? null : Number(v);
         else patch[k] = v === "" ? null : v;
       }
-      try { await api(`/api/documents/${id}`, { method: "PATCH", body: JSON.stringify(patch) }); toast("Saved"); closeDrawer(); await refresh(); }
-      catch (err) { toast("Save failed: " + err.message, 5000); }
+      if (manual) {
+        if (!patch.doc_type) { toast("Choose what this document is (Type) first", 5000); return; }
+        if (patch.total == null && patch.subtotal == null && !["other", "delivery_note", "contract_agreement", "insurance", "certificate_compliance", "bank_statement", "tax_document"].includes(patch.doc_type)) { toast("Enter the total (or the net amount)", 5000); return; }
+        for (const k of Object.keys(patch)) if (patch[k] == null) delete patch[k];  // blanks: let the server pick the usual direction, EUR, unknown payment
+      }
+      await savePatch(patch, manual ? "Saved — entered by hand, now counted in the dashboard" : "Saved");
     });
+    const nf = $("#notFinancialBtn");
+    if (nf) nf.addEventListener("click", () => savePatch({ doc_type: "other", direction: "none", payment_status: "not_applicable", summary: "Not a financial document (marked by hand)" }, "Marked as not a financial document"));
     const rp = $("#reprocessBtn");
     if (rp) rp.addEventListener("click", async () => {
       const prov = $("#reprocessWith").value;
@@ -901,7 +925,7 @@
         <div class="sync-status">Document reader: ${reader}</div>
         <div class="sync-status" style="margin-top:4px"><span class="ai-badge ${lcls}">${esc(l.label || "Checking…")}</span>
           <span class="muted small" style="margin-left:8px">${esc(l.message || "")}${l.checked_at ? ` · checked ${aiTime(l.checked_at)}` : ""}${l.fallback ? ` · fallback: ${esc({ ollama: "Ollama", claude: "Claude", gemini: "Gemini" }[l.fallback] || l.fallback)}` : ""}</span></div>
-        <div class="small" style="margin-top:8px">Figures in this ledger were read by: ${readBy.length ? readBy.map(([m, n]) => `<span class="chip ${m.startsWith("ollama/") ? "in" : "pipe"}">${esc(m.startsWith("ollama/") ? "Ollama " + m.slice(7) : m.startsWith("gemini/") ? "Gemini " + m.slice(7) : m)}: ${n} document${n === 1 ? "" : "s"}</span>`).join(" ") : "nothing read yet"}</div>
+        <div class="small" style="margin-top:8px">Figures in this ledger were read by: ${readBy.length ? readBy.map(([m, n]) => `<span class="chip ${m.startsWith("ollama/") ? "in" : m === "manual" ? "" : "pipe"}">${esc(m.startsWith("ollama/") ? "Ollama " + m.slice(7) : m.startsWith("gemini/") ? "Gemini " + m.slice(7) : m === "manual" ? "Entered by hand" : m)}: ${n} document${n === 1 ? "" : "s"}</span>`).join(" ") : "nothing read yet"}</div>
       </div>
       <div class="sync-status"><b>${esc(st.message || (st.running ? "Working…" : "Idle"))}</b>${st.current_source ? ` — ${esc(st.current_source)}` : ""}${st.current_file ? ` · ${esc(st.current_file)}` : ""}</div>
       <div class="progress"><i style="width:${pct}%"></i></div>

@@ -347,6 +347,55 @@ def test_skipped_photos_are_read_by_the_next_sync_once_a_vision_reader_exists(ad
     assert admin.get(f"/api/documents/{docs['photo.jpg']['id']}").json()["model"] == "fake-model"
 
 
+def test_a_skipped_handwritten_file_can_be_entered_by_hand(admin, fresh_db, monkeypatch, tmp_path):
+    """A photo Ollama cannot read: the owner types the figures in. It becomes a done, hand-entered
+    document that counts in the dashboard and is left alone by every later sync."""
+    fake = FakeOllama()
+    install_fake_ollama(monkeypatch, fake)
+    settings.set_value("anthropic_api_key", "")
+    folder = tmp_path / "Docs"
+    folder.mkdir()
+    (folder / "handwritten receipt.jpg").write_bytes(jpeg_bytes())
+    (folder / "site note.jpg").write_bytes(jpeg_bytes())
+    src = admin.post("/api/admin/sources", json={"kind": "local", "name": "Docs", "local_folder": str(folder)}).json()
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    docs = {d["name"]: d for d in admin.get("/api/documents?status=skipped").json()}
+    assert set(docs) == {"handwritten receipt.jpg", "site note.jpg"}
+    rid = docs["handwritten receipt.jpg"]["id"]
+    before = admin.get("/api/summary").json()["totals"]
+
+    # the type is required: it decides how the figures are counted
+    r = admin.patch(f"/api/documents/{rid}", json={"total": 121.16})
+    assert r.status_code == 400 and "document type" in r.json()["detail"]
+    # the usual direction / currency / payment status are filled in when left blank
+    r = admin.patch(f"/api/documents/{rid}", json={"doc_type": "receipt", "counterparty": "Chadwicks", "issue_date": "2026-02-14", "total": 121.16, "vat_amount": 22.66})
+    d = r.json()
+    assert r.status_code == 200 and d["status"] == "done" and d["overridden"] == 1 and d["error"] is None
+    assert d["model"] == "manual" and d["direction"] == "money_out" and d["treatment"] == "expense" and d["currency"] == "EUR"
+    assert d["payment_status"] == "unknown" and d["subtotal"] == 98.5 and d["net_amount"] == 98.5 and d["confidence"] == 1.0 and d["flags"] == []
+    assert admin.get("/api/summary").json()["totals"]["expenses"] == pytest.approx(before["expenses"] + 98.5)
+    assert sync.status()["read_by"] == {"manual": 1}
+    listed = {x["name"]: x for x in admin.get("/api/documents").json()}
+    assert listed["handwritten receipt.jpg"]["model"] == "manual" and listed["handwritten receipt.jpg"]["status"] == "done"
+
+    # a site photo is "not a financial document": done, counts nothing, no longer skipped
+    nid = docs["site note.jpg"]["id"]
+    d = admin.patch(f"/api/documents/{nid}", json={"doc_type": "other", "direction": "none", "payment_status": "not_applicable"}).json()
+    assert d["status"] == "done" and d["treatment"] == "none" and d["net_amount"] is None
+    assert admin.get("/api/documents?status=skipped").json() == []
+
+    # later syncs, even a full re-read, leave hand-entered figures alone
+    admin.post(f"/api/admin/sources/{src['id']}/sync?force=1"); wait_sync()
+    d = admin.get(f"/api/documents/{rid}").json()
+    assert d["status"] == "done" and d["total"] == 121.16 and d["model"] == "manual" and fake.requests == []
+    # a correction of a document a model read keeps the model's name (it is an edit, not a hand entry)
+    (folder / "INV-1.txt").write_text(INVOICE_TEXT, encoding="utf-8")
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    inv = {x["name"]: x for x in admin.get("/api/documents").json()}["INV-1.txt"]
+    d = admin.patch(f"/api/documents/{inv['id']}", json={"project": "Oak Drive"}).json()
+    assert d["model"] == inv["model"] != "manual" and d["project"] == "Oak Drive" and d["overridden"] == 1
+
+
 def test_claude_provider_still_works_and_needs_a_key(admin, fresh_db, monkeypatch, fake_claude):
     settings.set_value("llm_provider", "claude")
     cfg = admin.get("/api/config").json()

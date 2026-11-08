@@ -112,6 +112,15 @@ answer is retried twice with the error pointed out. If the Ollama PC is asleep t
 one clear message instead of failing every file; photos and scanned PDFs are marked *skipped* with
 the reason unless the Claude fallback is on.
 
+### Entering a document by hand
+
+Handwritten receipts, faint carbon copies and odd scans are often quicker to type in than to keep
+re-reading. Any *skipped*, *error* or *pending* document has an **Enter by hand** button (Documents
+list, the preview and the details drawer): look at the file, choose what it is, fill in the amounts
+and save. The figures count in the dashboard immediately, show as "by hand" (reader `manual` in the
+Sync tab), and are never overwritten by a sync; "Re-read" lets a model try again later. **Not a
+financial document** marks a note or site photo as nothing to count so it leaves the skipped list.
+
 Checks:
 
 ```

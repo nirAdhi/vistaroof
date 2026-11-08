@@ -218,6 +218,8 @@ tr.row-link:hover td { background: var(--surface-2); }
 .flagline { margin: 8px 0; display: flex; gap: 6px; flex-wrap: wrap; }
 .flag { background: color-mix(in srgb, var(--warning) 22%, transparent); padding: 1px 8px; border-radius: 999px; font-size: 11px; }
 .note { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; font-size: 13px; color: var(--ink-2); }
+.note.manual { border-left: 4px solid var(--accent); line-height: 1.45; }
+.kv select:required:invalid { color: var(--ink-2); }
 
 /* ---------- sync panel ---------- */
 .progress { height: 8px; background: var(--grid); border-radius: 4px; overflow: hidden; margin: 8px 0; }

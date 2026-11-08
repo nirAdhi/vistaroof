@@ -442,11 +442,21 @@ class DocumentPatch(BaseModel):
 
 @app.patch("/api/documents/{doc_id}", dependencies=[Depends(require_login)])
 def patch_document(doc_id: int, patch: DocumentPatch) -> dict[str, Any]:
-    """Hand correction: stored with overridden=1 so syncs never overwrite it."""
+    """Hand correction of a read document, or the figures of a skipped / failed file entered by hand
+    (handwritten receipt, unreadable scan). Stored with overridden=1 so syncs never overwrite it."""
     row = db.get_document(doc_id)
     if row is None:
         raise HTTPException(404, "document not found")
     changes = patch.model_dump(exclude_unset=True)
+    if row["status"] != "done":  # entering by hand: the type decides how the figures are counted, so it is required
+        if not changes.get("doc_type"):
+            raise HTTPException(400, "choose the document type (what this file is) before saving")
+        if not changes.get("direction"):
+            changes["direction"] = extract.default_direction(changes["doc_type"])
+        if not changes.get("currency"):
+            changes["currency"] = "EUR"
+        if not changes.get("payment_status"):
+            changes["payment_status"] = "unknown"
     if "doc_type" in changes and changes["doc_type"] not in extract.DOC_TYPES:
         raise HTTPException(400, "unknown document type")
     if "direction" in changes and changes["direction"] not in extract.DIRECTIONS:
@@ -454,6 +464,10 @@ def patch_document(doc_id: int, patch: DocumentPatch) -> dict[str, Any]:
     if "payment_status" in changes and changes["payment_status"] not in extract.PAYMENT_STATUSES:
         raise HTTPException(400, "unknown payment status")
     derived = extract.derive({**row, **changes})
+    if row["status"] != "done":  # hand entry: keep the worked-out net / total so the row is complete
+        for k in ("subtotal", "total"):
+            if changes.get(k) is None and derived.get(k) is not None:
+                changes[k] = derived[k]
     db.update_document(doc_id, changes, {k: derived[k] for k in ("treatment", "sign", "net_amount")})
     return db.get_document(doc_id) or {}
 

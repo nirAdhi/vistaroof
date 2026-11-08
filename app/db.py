@@ -486,8 +486,17 @@ EDITABLE_FIELDS = {
 }
 
 
+MANUAL_MODEL = "manual"  # ``documents.model`` for figures typed in by a person (a file no reader could read)
+
+
 def update_document(doc_id: int, patch: dict[str, Any], derived: dict[str, Any]) -> None:
-    """Apply a hand edit. Only EDITABLE_FIELDS are accepted; treatment/sign/net are recomputed by the caller."""
+    """Apply a hand edit. Only EDITABLE_FIELDS are accepted; treatment/sign/net are recomputed by the caller.
+
+    Works on a read document (a correction) and on a skipped / failed / pending one (the figures are
+    entered by hand, e.g. a handwritten receipt no model can read). Either way the row ends up
+    ``done`` with ``overridden=1`` so no sync re-reads it; a row that was never read gets
+    ``model='manual'`` and loses its error text, so it leaves the Skipped list and counts in the
+    dashboard immediately."""
     sets, vals = [], []
     for k, v in patch.items():
         if k in EDITABLE_FIELDS:  # whitelist: unknown keys are silently ignored
@@ -497,9 +506,11 @@ def update_document(doc_id: int, patch: dict[str, Any], derived: dict[str, Any])
         if k in derived:
             sets.append(f"{k}=?")
             vals.append(derived[k])
-    sets.append("overridden=1")
-    sets.append("status='done'")
-    vals.append(doc_id)
+    sets += ["overridden=1", "status='done'", "error=NULL", "processed_modified_at=modified_at",
+             "processed_at=COALESCE(processed_at, ?)", "model=COALESCE(model, ?)",
+             "confidence=CASE WHEN model IS NULL THEN 1.0 ELSE confidence END",
+             "flags=CASE WHEN model IS NULL THEN '[]' ELSE flags END"]
+    vals += [now_iso(), MANUAL_MODEL, doc_id]
     with connect() as conn:
         conn.execute(f"UPDATE documents SET {', '.join(sets)} WHERE id=?", vals)  # nosec B608 - names whitelisted, values bound
     _touch()
@@ -533,7 +544,7 @@ _DOC_LIST_COLUMNS = ", ".join(
         "id", "source", "source_ref", "source_id", "name", "mime", "folder", "web_link", "size", "modified_at", "status", "error",
         "processed_at", "doc_type", "direction", "treatment", "sign", "counterparty", "counterparty_role", "document_number",
         "issue_date", "due_date", "currency", "subtotal", "vat_amount", "total", "net_amount", "amount_paid", "payment_status",
-        "category", "project", "summary", "confidence", "flags", "overridden", "uploaded_by",
+        "category", "project", "summary", "confidence", "flags", "overridden", "uploaded_by", "model",
     )
 )
 

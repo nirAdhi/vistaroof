@@ -235,7 +235,7 @@
       <div class="strip-row"><div><b>Document reader</b> — ${who}${s.llm_fallback ? ` · fallback <b>${esc(NAMES[s.llm_fallback] || s.llm_fallback)}</b>${s.llm_fallback_usable ? "" : ' <span class="missing">(no key saved for it)</span>'}` : ""}</div>
         <div><button class="btn sm" id="llmCheckBtn">Check now</button></div></div>
       <div class="small" id="llmStatus" style="margin:6px 0 10px">${statusLine(l)}</div>
-      <div class="small" style="margin:0 0 12px">Figures in the ledger were read by: ${readBy.length ? readBy.map(([m, n]) => `<span class="chip">${esc(m.startsWith("ollama/") ? "Ollama " + m.slice(7) : m.startsWith("gemini/") ? "Gemini " + m.slice(7) : m)}: ${n}</span>`).join(" ") : "nothing read yet"}</div>
+      <div class="small" style="margin:0 0 12px">Figures in the ledger were read by: ${readBy.length ? readBy.map(([m, n]) => `<span class="chip">${esc(m.startsWith("ollama/") ? "Ollama " + m.slice(7) : m.startsWith("gemini/") ? "Gemini " + m.slice(7) : m === "manual" ? "Entered by hand" : m)}: ${n}</span>`).join(" ") : "nothing read yet"}</div>
       <form id="llmForm" class="form">
         <div class="grid two">
           <label>Read documents with
