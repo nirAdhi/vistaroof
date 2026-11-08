@@ -65,6 +65,8 @@
     renderMicrosoft(o.settings);
     renderSecurity(o.settings, o.users || []);
     renderLog(o.sync);
+    fillForm($("#backupForm"), o.settings);
+    loadBackups();
     $("#demoLoad").style.display = o.demo_loaded ? "none" : ""; $("#demoClear").style.display = o.demo_loaded ? "" : "none";
     renderPreviews(o.previews || { enabled: false, files: 0, bytes: 0 });
     $("#redirectUri").textContent = `${location.origin}/admin/oauth/callback`;
@@ -364,6 +366,54 @@
     btn.disabled = false;
   });
   $("#clearDocs").addEventListener("click", () => { if (confirm("Delete ALL extracted documents and sync history? This cannot be undone.")) run(api("/api/admin/clear-documents", { method: "POST" }), "All documents deleted"); });
+
+  // ------------------------------------------------------------ backups (Data section)
+  const mb = (b) => b == null ? "" : b >= 1073741824 ? `${(b / 1073741824).toFixed(2)} GB` : `${(b / 1048576).toFixed(1)} MB`;
+  let backupTimer = null;
+  function renderBackups(d) {
+    const dir = d.dir || {}, job = d.job || {}, items = d.items || [];
+    $("#backupDirStatus").innerHTML = dir.writable
+      ? `<span class="ok">Writing to <code>${esc(dir.path)}</code>${dir.default ? " (default, on this server's data disk)" : ""}${dir.free_bytes != null ? ` · ${esc(mb(dir.free_bytes))} free` : ""}</span>`
+      : `<span class="missing">${esc(dir.path)}: ${esc(dir.problem || "not writable")}</span>`;
+    $("#backupStopBtn").style.display = job.running ? "" : "none";
+    $("#backupFullBtn").disabled = !!job.running; $("#backupAppBtn").disabled = !!job.running;
+    const pct = job.total ? Math.round(job.done / job.total * 100) : 0;
+    $("#backupJob").innerHTML = job.running
+      ? `<div class="progress"><i style="width:${pct}%"></i></div><div class="muted">${esc(job.message)} · ${job.done} of ${job.total} files · ${esc(mb(job.bytes))}${job.error_count ? ` · <span class="neg">${job.error_count} could not be fetched</span>` : ""}</div>`
+      : job.phase === "done" || job.phase === "stopped" || job.phase === "failed"
+        ? `<span class="${job.phase === "done" ? "ok" : "missing"}">${esc(job.message)}</span>${job.errors && job.errors.length ? `<ul class="small">${job.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}`
+        : d.schedule && d.schedule.every_hours ? `<span class="muted">Automatic application backup every ${d.schedule.every_hours} h, keeping ${d.schedule.keep}.</span>` : `<span class="muted">No automatic backups (set the hours above).</span>`;
+    $("#backupList").innerHTML = items.length ? `<table><thead><tr><th>Backup</th><th>Kind</th><th class="num">Size</th><th>Created</th><th></th></tr></thead><tbody>${items.map((b) => `<tr>
+        <td><code>${esc(b.name)}</code>${b.complete ? "" : ' <span class="badge warning">incomplete</span>'}</td><td>${b.kind === "app" ? "Application data" : "Everything incl. files"}</td><td class="num">${esc(mb(b.size))}</td><td>${when(b.created)}</td>
+        <td class="actions"><a class="btn sm" href="/api/admin/backups/download?name=${encodeURIComponent(b.name)}">Download zip</a> <button class="btn sm" data-del-backup="${esc(b.name)}">Delete</button></td></tr>`).join("")}</tbody></table>`
+      : `<div class="muted small">No backups in this folder yet.</div>`;
+    $$("#backupList [data-del-backup]").forEach((btn) => btn.addEventListener("click", async () => {
+      if (!confirm(`Delete backup ${btn.dataset.delBackup}? The backup is removed from the folder; the ledger itself is not touched.`)) return;
+      try { await api(`/api/admin/backups/${encodeURIComponent(btn.dataset.delBackup)}`, { method: "DELETE" }); toast("Backup deleted"); await loadBackups(); } catch (err) { toast(err.message, 6000); }
+    }));
+    clearTimeout(backupTimer);
+    if (job.running) backupTimer = setTimeout(loadBackups, 2000);
+  }
+  async function loadBackups() {
+    try { renderBackups(await api("/api/admin/backups")); } catch (_) { /* logged out */ }
+  }
+  $("#backupForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = { backup_dir: fd.get("backup_dir").trim(), backup_every_hours: parseInt(fd.get("backup_every_hours") || "0", 10), backup_keep: parseInt(fd.get("backup_keep") || "10", 10) };
+    try { await api("/api/admin/settings", { method: "PUT", body: JSON.stringify(body) }); toast("Backup settings saved"); await loadBackups(); } catch (err) { toast(err.message, 7000); }
+  });
+  $("#backupAppBtn").addEventListener("click", async () => {
+    const btn = $("#backupAppBtn"); btn.disabled = true; btn.textContent = "Backing up…";
+    try { const r = await api("/api/admin/backups/app", { method: "POST" }); toast(`Application backup written: ${r.item.name} (${mb(r.item.size)})`, 6000); await loadBackups(); }
+    catch (err) { toast(err.message, 8000); }
+    btn.disabled = false; btn.textContent = "Back up application data now";
+  });
+  $("#backupFullBtn").addEventListener("click", async () => {
+    if (!confirm("Fetch every document file from the sources into the backup folder? Nothing on the sources is changed; it can take a while and needs free space.")) return;
+    try { await api("/api/admin/backups/full", { method: "POST" }); toast("Full backup started"); await loadBackups(); } catch (err) { toast(err.message, 8000); }
+  });
+  $("#backupStopBtn").addEventListener("click", async () => { try { await api("/api/admin/backups/stop", { method: "POST" }); await loadBackups(); } catch (err) { toast(err.message, 6000); } });
   function renderSecurity(s, users) {
     const active = users.filter((u) => u.active).length;
     $("#securityStatus").innerHTML = `<ul class="setup-steps" style="list-style:none;padding:0">

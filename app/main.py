@@ -34,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
 import tempfile
@@ -47,10 +48,11 @@ from urllib.parse import quote, urlparse
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import analytics, ask, config, db, demo, extract, gemini, llm, logsetup, microsoft, previews, repair, settings, sources, sync
+from . import analytics, ask, backup, config, db, demo, extract, gemini, llm, logsetup, microsoft, previews, repair, settings, sources, sync
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -75,6 +77,7 @@ async def _lifespan(_app: FastAPI):
     sync.start_scheduler()
     llm.refresh_in_background()  # populate the "document reader" status without delaying start-up
     repair.run_in_background()  # dates a stricter parser once rejected are recovered from the stored answers
+    backup.start_scheduler()
     yield
 
 
@@ -743,6 +746,9 @@ class SettingsPatch(BaseModel):
     gemini_api_key: str | None = Field(None, max_length=300)
     gemini_model: str | None = Field(None, max_length=80)
     cache_previews: bool | None = None  # keep viewable copies of files on the server (default off)
+    backup_dir: str | None = Field(None, max_length=500)  # folder for backups ("" = <DATA_DIR>/backups)
+    backup_every_hours: int | None = Field(None, ge=0, le=720)
+    backup_keep: int | None = Field(None, ge=1, le=100)
     llm_provider: str | None = Field(None, max_length=10)  # ollama | claude | gemini (default from .env)
     llm_fallback: str | bool | None = None  # second reader: "" | claude | gemini | ollama (True = claude); validated below
 
@@ -759,6 +765,14 @@ def admin_update_settings(body: SettingsPatch) -> dict[str, Any]:
         if key and not settings.looks_like_key(key):
             raise HTTPException(400, "that does not look like a Claude API key")
         changes["anthropic_api_key"] = key
+    if "backup_dir" in changes:
+        folder = (changes["backup_dir"] or "").strip()
+        if folder:
+            try:
+                folder = str(backup.check_dir(folder))
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
+        changes["backup_dir"] = folder
     if "gemini_api_key" in changes:
         key = (changes["gemini_api_key"] or "").strip()
         if key and not settings.looks_like_key(key):
@@ -789,8 +803,8 @@ def admin_update_settings(body: SettingsPatch) -> dict[str, Any]:
         raise HTTPException(400, "unknown model")
     if "base_currency" in changes and changes["base_currency"]:
         changes["base_currency"] = changes["base_currency"].strip().upper()[:3]
-    if "watch_interval_seconds" in changes and 0 < changes["watch_interval_seconds"] < 30:
-        changes["watch_interval_seconds"] = 30  # keep Drive API usage reasonable
+    if "watch_interval_seconds" in changes and 0 < changes["watch_interval_seconds"] < sync.MIN_WATCH_SECONDS:
+        changes["watch_interval_seconds"] = sync.MIN_WATCH_SECONDS  # one change-feed call per source per interval; Microsoft / Google throttle faster polling
     settings.set_many(changes)
     if {"llm_provider", "llm_fallback", "anthropic_api_key", "gemini_api_key", "gemini_model"} & changes.keys():
         llm.refresh_in_background()  # the badge should reflect the new reader within seconds
@@ -1186,7 +1200,72 @@ def admin_backup():
     tmp.close()
     db.backup_to(tmp.name)
     stamp = time.strftime("%Y%m%d-%H%M")
-    return FileResponse(tmp.name, media_type="application/octet-stream", filename=f"ledger-{stamp}.db")
+    return FileResponse(tmp.name, media_type="application/octet-stream", filename=f"ledger-{stamp}.db", background=BackgroundTask(_unlink_quietly, tmp.name))
+
+
+def _unlink_quietly(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+@app.get("/api/admin/backups", dependencies=[Depends(require_admin)])
+def admin_backups() -> dict[str, Any]:
+    """Backup folder, what is in it, the running job and the schedule (Admin → Data → Backups)."""
+    return {"dir": backup.dir_info(), "items": backup.list_backups(), "job": backup.status(),
+            "schedule": {"every_hours": settings.get_int("backup_every_hours", 0), "keep": settings.get_int("backup_keep", 10), "due": backup.due()}}
+
+
+@app.post("/api/admin/backups/app", dependencies=[Depends(require_admin)])
+def admin_backup_app() -> dict[str, Any]:
+    """Application backup now: database + documents.csv + summary.json in one zip in the backup folder."""
+    try:
+        return {"ok": True, "item": backup.app_backup()}
+    except (ValueError, OSError) as exc:
+        raise HTTPException(400, f"backup could not be written: {exc}")
+
+
+@app.post("/api/admin/backups/full", dependencies=[Depends(require_admin)])
+def admin_backup_full() -> dict[str, Any]:
+    """Full backup in the background: application zip + every document file fetched from its source."""
+    if sync.status()["running"]:
+        raise HTTPException(409, "a sync is running: wait for it (or press Stop) before a full backup, so the sources are not read twice at once")
+    info = backup.dir_info()
+    if not info["writable"]:
+        raise HTTPException(400, f"backup folder {info['path']}: {info.get('problem', 'not writable')}")
+    if not backup.start_full():
+        raise HTTPException(409, "a backup is already running")
+    return {"ok": True, "job": backup.status()}
+
+
+@app.post("/api/admin/backups/stop", dependencies=[Depends(require_admin)])
+def admin_backup_stop() -> dict[str, Any]:
+    return {"stopped": backup.stop(), "job": backup.status()}
+
+
+@app.get("/api/admin/backups/download", dependencies=[Depends(require_admin)])
+def admin_backup_download(name: str = Query(..., max_length=80)):
+    """Download one backup as a zip (a full backup folder is zipped on the fly)."""
+    try:
+        path, filename, temporary = backup.download_path(name)
+    except ValueError:
+        raise HTTPException(400, "not a backup name")
+    except FileNotFoundError:
+        raise HTTPException(404, "backup not found")
+    bg = BackgroundTask(_unlink_quietly, str(path)) if temporary else None
+    return FileResponse(str(path), media_type="application/zip", filename=filename, background=bg)
+
+
+@app.delete("/api/admin/backups/{name}", dependencies=[Depends(require_admin)])
+def admin_backup_delete(name: str) -> dict[str, Any]:
+    try:
+        backup.delete(name)
+    except ValueError:
+        raise HTTPException(400, "not a backup name")
+    except FileNotFoundError:
+        raise HTTPException(404, "backup not found")
+    return {"ok": True, "items": backup.list_backups()}
 
 
 @app.post("/api/admin/clear-documents", dependencies=[Depends(require_admin)])

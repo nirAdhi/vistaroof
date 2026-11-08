@@ -112,7 +112,7 @@
             <label>Model for "Ask" <select name="ask_model"><option value="">Same as reading model</option></select></label>
             <label>Files read in parallel <input name="concurrency" type="number" min="1" max="10"></label>
             <label>Skip files larger than (MB) <input name="max_file_mb" type="number" min="1" max="100" step="1"></label>
-            <label>Watch Microsoft 365 / Google Drive for changes every (seconds, 0 = off) <input name="watch_interval_seconds" type="number" min="0" max="86400"></label>
+            <label>Check Microsoft 365 / Google Drive for changes every (seconds, 0 = off, minimum 10; a check is one small request per folder and reads nothing unless a file changed) <input name="watch_interval_seconds" type="number" min="0" max="86400"></label>
             <label>Full re-scan of every source every (minutes, 0 = off) <input name="auto_sync_minutes" type="number" min="0" max="10080"></label>
           </div>
           <div class="actions"><button class="btn primary" type="submit">Save</button><span class="muted small" id="claudeSaved"></span></div>
@@ -221,6 +221,28 @@
         <p class="muted small">Off (recommended): a preview is fetched from the source every time it is opened and nothing is written to disk. On: the viewable copy is kept under <code>data/previews</code>.</p>
         <div class="actions"><button class="btn" id="clearPreviews">Delete stored copies</button></div>
       </div>
+      <div class="card" style="margin-bottom:14px" id="backupCard">
+        <h3>Backups</h3>
+        <p class="muted small">Two kinds. <b>Application backup</b>: one zip with the database (every figure, setting, source and user), <code>documents.csv</code> and <code>summary.json</code> — seconds, no files from OneDrive. <b>Full backup</b>: the same plus every document file fetched again from SharePoint / OneDrive / Drive into a folder tree — takes a while, nothing on the sources is changed. Both land in the folder below (point it at a mounted USB / external drive) and can also be downloaded as a zip to save on a drive attached to this PC. Restore: stop the app, replace <code>data/ledger.db</code> with the one in the zip, start the app.</p>
+        <form id="backupForm" class="form">
+          <label>Backup folder on the server (a mounted USB / external drive, e.g. <code>/mnt/usb/ledger-backups</code>; empty = <code>data/backups</code>)
+            <div class="inline"><input name="backup_dir" placeholder="/mnt/usb/ledger-backups"><button class="btn" type="submit">Save</button></div>
+            <div class="small" id="backupDirStatus"></div>
+          </label>
+          <div class="grid two">
+            <label>Automatic application backup every (hours, 0 = off) <input name="backup_every_hours" type="number" min="0" max="720"></label>
+            <label>Keep the newest (backups of each kind; older ones are removed) <input name="backup_keep" type="number" min="1" max="100"></label>
+          </div>
+        </form>
+        <div class="actions" style="margin-top:10px">
+          <button class="btn primary" id="backupAppBtn">Back up application data now</button>
+          <button class="btn" id="backupFullBtn">Back up everything incl. OneDrive files</button>
+          <button class="btn" id="backupStopBtn" style="display:none">Stop</button>
+          <a class="btn" href="/api/admin/backup" title="Just the SQLite database file, downloaded through the browser">Download database only</a>
+        </div>
+        <div class="small" id="backupJob" style="margin-top:8px"></div>
+        <div id="backupList" style="margin-top:10px"></div>
+      </div>
       <div class="card" style="margin-bottom:14px">
         <h3>Dates</h3>
         <p class="muted small">A document without a date is placed in the dashboard by its file date, which can put an old invoice in the current period. If the reader wrote the date in another notation (14/02/2026, 14 Feb 2026), this recovers it from the stored answer without reading the file again. It also runs by itself at every start.</p>
@@ -231,11 +253,6 @@
           <h3>Demo data</h3>
           <p class="muted small">A sample year of a roofing company so the owner dashboard can be explored before anything is connected.</p>
           <div class="actions"><button class="btn" id="demoLoad">Load demo data</button><button class="btn" id="demoClear">Remove demo data</button></div>
-        </div>
-        <div class="card">
-          <h3>Backup</h3>
-          <p class="muted small">Download a copy of the database (settings, sources, every extracted document). Keep it somewhere safe; restore by replacing <code>data/ledger.db</code> while the app is stopped.</p>
-          <div class="actions"><a class="btn" href="/api/admin/backup">Download backup</a></div>
         </div>
         <div class="card danger">
           <h3>Danger zone</h3>

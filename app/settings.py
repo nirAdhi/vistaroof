@@ -53,6 +53,7 @@ SECRET_KEYS = {"anthropic_api_key", "gemini_api_key", "google_client_config", "m
 PUBLIC_KEYS = [
     "company_name", "company_address", "company_vat", "base_currency", "country", "extract_model", "extract_effort",
     "ask_model", "concurrency", "max_file_mb", "auto_sync_minutes", "cache_previews", "gemini_model",
+    "backup_dir", "backup_every_hours", "backup_keep",
 ]
 ENCRYPTED_KEYS = {"anthropic_api_key", "gemini_api_key", "google_client_config", "ms_client_config"}  # password hashes and the HMAC secret are not secrets of value
 API_KEY_SETTINGS = ("anthropic_api_key", "gemini_api_key")

@@ -18,6 +18,9 @@ APP_DEBUG         ``1`` shows exception details in API error responses. Keep off
 LOCAL_ROOTS       Optional ``;``-separated list of directories that local-folder sources may point
                   at. When set, an admin cannot register a folder outside these roots.
 LOG_DIR           Folder for rotating log files (default ``<DATA_DIR>/logs``).
+BACKUP_DIR        Initial backup folder (Admin → Data can change it), e.g. a mounted USB drive.
+BACKUP_ROOTS      Optional ``;``-separated list confining where backups may be written.
+BACKUP_EVERY_HOURS / BACKUP_KEEP   Automatic application backups (0 = off) and how many to keep.
 ADMIN_PASSWORD    Built-in admin password, applied at every start (10+ characters). When set, the
                   first-run "create the admin password" screen is skipped and the password cannot be
                   changed from the UI: edit the file and restart instead.
@@ -61,6 +64,7 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "auto").strip().lower()
 DEBUG = os.getenv("APP_DEBUG", "").strip().lower() in ("1", "true", "yes")
 LOCAL_ROOTS = [Path(p.strip()).resolve() for p in os.getenv("LOCAL_ROOTS", "").split(";") if p.strip()]
+BACKUP_ROOTS = [Path(p.strip()).resolve() for p in os.getenv("BACKUP_ROOTS", "").split(";") if p.strip()]  # where backups may be written
 IS_PRODUCTION = bool(PUBLIC_BASE_URL)  # a public URL means the app is exposed beyond localhost
 
 # Built-in admin login from the environment (see settings.apply_env_admin()).
@@ -98,6 +102,9 @@ ENV_DEFAULTS = {
     "llm_fallback": LLM_FALLBACK,                 # "" | claude | gemini | ollama
     "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
     "gemini_model": GEMINI_MODEL,
+    "backup_dir": os.getenv("BACKUP_DIR", ""),            # e.g. a mounted USB drive; empty = <DATA_DIR>/backups
+    "backup_every_hours": os.getenv("BACKUP_EVERY_HOURS", "0"),
+    "backup_keep": os.getenv("BACKUP_KEEP", "10"),
     "extract_model": os.getenv("EXTRACT_MODEL", "claude-opus-5-5"),
     "extract_effort": os.getenv("EXTRACT_EFFORT", "medium"),
     "ask_model": os.getenv("ASK_MODEL", ""),

@@ -124,7 +124,10 @@ readers; a user cannot.
   capped by the per-file size limit and 60 pages.
 - Drive folder ids are validated against `[A-Za-z0-9_-]`; SharePoint links are resolved through
   Graph, never fetched directly.
-- Local-folder sources can be confined with `LOCAL_ROOTS`.
+- Local-folder sources can be confined with `LOCAL_ROOTS`; the backup folder with `BACKUP_ROOTS`.
+  The backup folder must exist and be writable when set; backup names are validated against a
+  fixed pattern before any path is built (no traversal), only files matching that pattern are ever
+  listed, downloaded, deleted or rotated, and temporary download zips are removed after sending.
 - SQL: every value is a bound parameter; the few statements built from column names use
   code-level whitelists (`db._SOURCE_COLUMNS`, `db._RUN_COLUMNS`, `db.EDITABLE_FIELDS`).
 
@@ -196,8 +199,9 @@ readers; a user cannot.
   `pypdf` current.
 - **Rate limiting is in-process memory.** With more than one worker process (not the default) use a
   shared store or do limiting at the proxy.
-- **Backups contain all financial data.** Store them encrypted (the file itself is not encrypted;
-  only the secrets inside are).
+- **Backups contain all financial data.** An application backup holds every figure and the
+  database (secrets inside stay encrypted); a full backup also holds every document file. Keep the
+  USB / external drive locked away or use an encrypted volume; the zips themselves are not encrypted.
 - **Dependency drift.** Re-run `pip-audit` monthly and before each deployment; this review found two
   transitive CVEs that a pinned top-level set did not prevent.
 

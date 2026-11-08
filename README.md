@@ -41,6 +41,32 @@ faster previews). Untick "Allow uploads" on a source and the app never asks for 
 The dashboard ships with demo data (including generated sample pages for previews) so it can be
 explored before anything is connected.
 
+## How syncing works (full read once, then changes only)
+
+The first sync of a source lists every file and reads each one with the document reader. After that
+nothing is re-read unless it changed: the watcher asks SharePoint / OneDrive / Google Drive for
+*changes* every `watch_interval_seconds` (Admin → Document reader; default 120 s, minimum 10 s)
+using their change feeds (Microsoft Graph delta / Drive changes). A check is one small request per
+folder and costs no GPU or API usage; only a new or modified file is downloaded and read. The
+dashboard notices new figures within 20 s and refreshes itself. "Full re-read" re-reads everything
+and is only for when the reader or its prompt changed.
+
+## Backups (Admin → Data → Backups)
+
+Two kinds, written to a folder on the server — point it at a mounted USB / external drive — and
+also downloadable as a zip to save on a drive attached to your own PC:
+
+| | Application backup | Full backup |
+|---|---|---|
+| Contents | `ledger.db` (every figure, setting, source, user; secrets stay encrypted), `documents.csv`, `summary.json`, `manifest.json` in one zip | The same zip under `app/` plus every document file fetched again from SharePoint / OneDrive / Drive / local folders under `files/<source>/<folder>/<name>` |
+| Takes | seconds | minutes to hours (one download per file; nothing on the sources is changed) |
+| Schedule | every N hours (`backup_every_hours`), keeping the newest `backup_keep` | on demand, with progress and Stop |
+| Restore | stop the app, replace `data/ledger.db` with the one in the zip, start | same; the `files` tree is a plain copy of the folders |
+
+`BACKUP_DIR` / `BACKUP_EVERY_HOURS` / `BACKUP_KEEP` in `.env` give the starting values;
+`BACKUP_ROOTS` can confine where backups may be written. Backups are listed, downloadable and
+deletable from the same card; only files matching the app's own naming pattern are ever touched.
+
 ## Which model reads the documents (Ollama, Claude or Gemini)
 
 The reader is chosen under Admin → Document reader (default from `LLM_PROVIDER` in `.env`;
@@ -99,7 +125,7 @@ docker compose up -d --build
 ## Development
 
 ```
-.venv\Scripts\python -m pytest tests        # 82 tests, no network (fake Claude, fake Ollama, fake Gemini, fake Drive, fake Graph)
+.venv\Scripts\python -m pytest tests        # 91 tests, no network (fake Claude, fake Ollama, fake Gemini, fake Drive, fake Graph)
 .venv\Scripts\python -m pip_audit           # dependency vulnerabilities
 .venv\Scripts\python -m bandit -r app -ll   # static analysis
 ```
@@ -119,6 +145,7 @@ app/
   gemini.py      Gemini client (REST generateContent with a response schema; key test; schema converter)
   textract.py    plain-text extraction (PDF text layer, Excel, Word) for text-only models
   llm.py         provider façade (ready? health?) + llm_check.py command line; errors.py shared ApiUnavailable
+  backup.py      application / full backups to a folder (USB drive), zip downloads, retention, schedule; repair.py date repair
   analytics.py   dashboard aggregates and company directory
   ask.py         natural-language questions
   previews.py    cached viewable copies of files; render_demo.py sample pages; images.py photo normalisation

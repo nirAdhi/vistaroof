@@ -327,6 +327,7 @@ def process_uploaded(src: dict[str, Any], files: list[tuple[str, bytes, str]]) -
 
 _scheduler_started = False
 LLM_STATUS_EVERY = 60  # seconds between checks of the document reader (Ollama reachability)
+MIN_WATCH_SECONDS = 10  # floor for watch_interval_seconds: one delta call per source per interval is cheap for us, not for Graph if faster
 
 
 def check_for_changes() -> list[int]:

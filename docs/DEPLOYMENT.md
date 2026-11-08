@@ -59,6 +59,25 @@ Verify from inside the container with `python -m app.llm_check` (Docker:
 `docker compose exec app python -m app.llm_check`). A public deployment that should keep using
 Claude must set `LLM_PROVIDER=claude` explicitly.
 
+**Backups to a USB / external drive.** Mount the drive on the host and make it visible to the app,
+then set the folder in Admin → Data → Backups (or `BACKUP_DIR`):
+
+```
+# LXC / systemd: the folder is simply a path on the host, e.g.
+BACKUP_DIR=/mnt/usb/ledger-backups
+BACKUP_EVERY_HOURS=24        # automatic application backup once a day
+BACKUP_KEEP=14               # keep two weeks of them
+# Docker: add the mount to the app service in docker-compose.yml, then use the container path
+#   volumes:
+#     - ledger-data:/data
+#     - /mnt/usb/ledger-backups:/backups
+# BACKUP_DIR=/backups
+# BACKUP_ROOTS=/backups      # optional: the admin cannot point backups anywhere else
+```
+
+A full backup (every document file fetched again from the sources) needs free space of roughly the
+size of the folders in SharePoint / OneDrive; the card shows the free space of the chosen folder.
+
 The app applies these at every start, so `/admin` never asks you to create a password, and resetting
 it is: edit the file, `docker compose up -d`. Without `ADMIN_PASSWORD` the first visit to `/admin`
 asks for a password; if it is forgotten, `docker compose exec app python -m app.reset_admin` clears
