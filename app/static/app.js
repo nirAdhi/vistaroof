@@ -878,6 +878,11 @@
     else if (p === "last12") { const d = new Date(now.getFullYear(), now.getMonth() - 11, 1); from = iso(d); to = iso(now); }
     else if (p === "lastyear") { from = `${now.getFullYear() - 1}-01-01`; to = `${now.getFullYear() - 1}-12-31`; }
     else if (p === "q") { const qm = Math.floor(now.getMonth() / 3) * 3; from = iso(new Date(now.getFullYear(), qm, 1)); to = iso(now); }
+    else if (p === "vat" || p === "vatprev") {  // Irish bi-monthly VAT periods: Jan–Feb, Mar–Apr, May–Jun, Jul–Aug, Sep–Oct, Nov–Dec
+      let y = now.getFullYear(), m0 = Math.floor(now.getMonth() / 2) * 2;
+      if (p === "vatprev") { m0 -= 2; if (m0 < 0) { m0 = 10; y -= 1; } }
+      from = iso(new Date(y, m0, 1)); to = p === "vat" ? iso(now) : iso(new Date(y, m0 + 2, 0));
+    }
     state.range = { from, to, preset: p };
     $("#fromDate").value = from || ""; $("#toDate").value = to || "";
     $$("#presets button").forEach((b) => b.classList.toggle("active", b.dataset.range === p));
