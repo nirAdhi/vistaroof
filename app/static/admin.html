@@ -225,7 +225,7 @@
         <h3>Backups</h3>
         <p class="muted small">Two kinds. <b>Application backup</b>: one zip with the database (every figure, setting, source and user), <code>documents.csv</code> and <code>summary.json</code> — seconds, no files from OneDrive. <b>Full backup</b>: the same plus every document file fetched again from SharePoint / OneDrive / Drive into a folder tree — takes a while, nothing on the sources is changed. Both land in the folder below (point it at a mounted USB / external drive) and can also be downloaded as a zip to save on a drive attached to this PC. Restore: stop the app, replace <code>data/ledger.db</code> with the one in the zip, start the app.</p>
         <form id="backupForm" class="form">
-          <label>Backup folder on the server (a mounted USB / external drive, e.g. <code>/mnt/usb/ledger-backups</code>; empty = <code>data/backups</code>)
+          <label>Backup folder on the server — a mounted USB / external drive such as /mnt/usb/ledger-backups; leave empty for data/backups on this server
             <div class="inline"><input name="backup_dir" placeholder="/mnt/usb/ledger-backups"><button class="btn" type="submit">Save</button></div>
             <div class="small" id="backupDirStatus"></div>
           </label>
