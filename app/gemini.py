@@ -16,7 +16,9 @@ message: ``KeyRejected`` (400 API_KEY_INVALID / 403), ``ModelMissing`` (404), ``
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 import time
 from typing import Any
 
@@ -30,11 +32,17 @@ log = logging.getLogger(__name__)
 RETRY_SLEEP = 2.0  # seconds, multiplied by the attempt number (tests set it to 0)
 MAX_ATTEMPTS = 3
 
+AUTO = "auto"  # pick the newest Flash model the key can use (Google retires model names for new accounts over time)
 SUGGESTED_MODELS = [
-    ("gemini-2.5-flash", "Gemini 2.5 Flash (fast, cheap, reads photos and PDFs)"),
-    ("gemini-2.5-pro", "Gemini 2.5 Pro (most careful)"),
-    ("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite (cheapest)"),
+    (AUTO, "Newest Flash model available to this key (recommended)"),
+    ("gemini-3.8-flash", "Gemini 3.8 Flash"),
+    ("gemini-2.5-flash", "Gemini 2.5 Flash (older accounts only)"),
+    ("gemini-2.5-pro", "Gemini 2.5 Pro"),
 ]
+_MODEL_CACHE: dict[str, tuple[float, str]] = {}  # key fingerprint -> (time, resolved model)
+MODEL_CACHE_TTL = 3600
+_SKIP_WORDS = ("lite", "preview", "exp", "image", "tts", "live", "audio", "embedding", "thinking", "native")
+_VERSION_RE = re.compile(r"^gemini-(\d+(?:\.\d+)?)-flash$")
 
 
 class KeyRejected(ApiUnavailable):
@@ -78,7 +86,7 @@ def _request(method: str, path: str, key: str, body: dict[str, Any] | None = Non
         if resp.status_code in (401, 403) or (resp.status_code == 400 and "api key" in detail.lower()):
             raise KeyRejected(f"Gemini API rejected the key ({resp.status_code}): {detail[:200]}. Check Admin → Document reader.")
         if resp.status_code == 404:
-            raise ModelMissing(f"Gemini model not found ({detail[:160]}). Pick another model name in Admin → Document reader.")
+            raise ModelMissing(f"Gemini model not found ({detail[:160]}). Set the model to 'auto' (newest Flash model for this key) or pick a listed name in Admin → Document reader.")
         if resp.status_code in (429, 500, 502, 503, 504) and attempt < MAX_ATTEMPTS:
             time.sleep(RETRY_SLEEP * attempt)
             continue
@@ -152,14 +160,54 @@ def list_models(key: str) -> list[str]:
     return [n for n in names if n]
 
 
+def pick_model(models: list[str]) -> str | None:
+    """The newest plain Flash model in a key's model list (``gemini-3.8-flash`` over ``gemini-2.5-flash``), else any Gemini."""
+    best: tuple[float, str] | None = None
+    for m in models:
+        mm = _VERSION_RE.match(m)
+        if mm and not any(w in m for w in _SKIP_WORDS):
+            v = float(mm.group(1))
+            if best is None or v > best[0]:
+                best = (v, m)
+    if best:
+        return best[1]
+    plain = [m for m in models if m.startswith("gemini-") and not any(w in m for w in _SKIP_WORDS)]
+    return sorted(plain)[-1] if plain else None
+
+
+def resolve_model(key: str, model: str) -> str:
+    """``auto`` → the newest Flash model this key can use (cached an hour); any other name is returned as is."""
+    if model and model != AUTO:
+        return model
+    fp = hashlib.sha256(key.encode()).hexdigest()[:16]
+    hit = _MODEL_CACHE.get(fp)
+    if hit and time.time() - hit[0] < MODEL_CACHE_TTL:
+        return hit[1]
+    chosen = pick_model(list_models(key))
+    if not chosen:
+        raise ModelMissing("This Gemini key has no usable Gemini model. Check the key in Google AI Studio.")
+    _MODEL_CACHE[fp] = (time.time(), chosen)
+    log.info("gemini: model 'auto' resolved to %s", chosen)
+    return chosen
+
+
 def test_api_key(key: str, model: str) -> dict[str, Any]:
     """Key valid? Model available? One tiny answer? (The Admin "Test key" / "Check now" button.)"""
     out: dict[str, Any] = {"ok": False, "provider": "gemini", "model": model}
     try:
         models = list_models(key)
         out["models"] = [m for m in models if "gemini" in m][:40]
+        if model == AUTO:
+            chosen = pick_model(models)
+            if not chosen:
+                out["message"] = "The key works, but it has no usable Gemini model."
+                return out
+            out["model"] = model = chosen
+            out["auto"] = True
         if model not in models:
-            out["message"] = f"The key works, but model '{model}' is not available to it. Models with this key: {', '.join(out['models'][:8]) or 'none'}…"
+            hint = pick_model(models)
+            out["message"] = (f"The key works, but model '{model}' is not available to it. "
+                              f"{'Use ' + hint + ' or set the model to auto.' if hint else ''} Models with this key: {', '.join(out['models'][:8]) or 'none'}…")
             return out
         try:
             reply = generate(key, model, "Answer in one word.", [{"text": "Reply with OK."}], max_tokens=64)
@@ -167,7 +215,7 @@ def test_api_key(key: str, model: str) -> dict[str, Any]:
         except RuntimeError as exc:  # a cut-off or empty probe still proves the key, model and billing
             out["probe"] = f"({exc})"
         out["ok"] = True
-        out["message"] = f"Gemini key works and model {model} answers."
+        out["message"] = f"Gemini key works and model {model} answers." + (" (chosen automatically as the newest Flash model)" if out.get("auto") else "")
     except ApiUnavailable as exc:
         out["message"] = str(exc)
     except Exception as exc:

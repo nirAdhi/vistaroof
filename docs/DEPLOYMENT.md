@@ -52,7 +52,7 @@ LLM_FALLBACK=                                # second reader when the first is u
 OLLAMA_BASE_URL=http://192.168.0.183:11434   # must be reachable from the app container; never expose it publicly
 OLLAMA_MODEL=qwen2.5:3b                      # ollama pull qwen2.5:3b on that machine
 # GEMINI_API_KEY=                            # or paste it in Admin; use a project with billing enabled (see docs/SECURITY.md)
-# GEMINI_MODEL=gemini-2.5-flash
+# GEMINI_MODEL=auto                          # newest Flash model the key can use (Google retires names for new accounts)
 ```
 
 Verify from inside the container with `python -m app.llm_check` (Docker:

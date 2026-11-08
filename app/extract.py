@@ -459,7 +459,7 @@ def _extract_gemini(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any
     key = settings.get("gemini_api_key").strip()
     if not settings.looks_like_key(key):
         raise ApiUnavailable("No Gemini API key saved. Add one under Admin → Document reader.")
-    model = settings.provider_model("gemini")
+    model = gemini.resolve_model(key, settings.provider_model("gemini"))
     parts = _gemini_parts(build_content_blocks(meta, content))
     text = gemini.generate(key, model, build_system_prompt(), parts, schema=OUTPUT_SCHEMA, max_tokens=8000)
     raw = _validate_full(modelout.parse_json_object(text))
@@ -658,11 +658,20 @@ def extract(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
     except textract.NeedsVision as exc:
         if fb:
             log.info("%s: %s — handing it to %s (fallback reader)", meta.name, exc, fb)
-            return EXTRACTORS[fb](meta, content)
+            return _with_fallback(fb, meta, content)
         raise ValueError(f"{NEEDS_VISION_PREFIX}: {exc} — the text-only model ({config.OLLAMA_MODEL}) cannot read it. Choose Claude or "
                          "Gemini as the fallback reader in Admin → Document reader (needs that key); the next sync then reads this file.") from exc
     except ApiUnavailable as exc:
         if fb:
             log.warning("%s: %s — handing it to %s (fallback reader)", meta.name, exc, fb)
-            return EXTRACTORS[fb](meta, content)
+            return _with_fallback(fb, meta, content)
         raise
+
+
+def _with_fallback(fb: str, meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
+    """Run the fallback reader. Its own outage is this file's error, not a reason to stop the run — the
+    primary reader is still fine for everything else."""
+    try:
+        return EXTRACTORS[fb](meta, content)
+    except ApiUnavailable as exc:
+        raise RuntimeError(f"fallback reader {config.PROVIDER_LABELS[fb]}: {exc}") from exc

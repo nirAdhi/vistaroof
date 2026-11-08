@@ -106,7 +106,7 @@ def test_key_rejected_quota_and_missing_model_stop_the_run(admin, fresh_db, monk
         extract.extract(_meta("a.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
     assert llm.health()["state"] == "key_invalid"
     settings.set_many({"gemini_api_key": KEY, "gemini_model": "gemini-9-ultra"})
-    with pytest.raises(gemini.ModelMissing, match="Pick another model"):
+    with pytest.raises(gemini.ModelMissing, match="set the model to 'auto'|Set the model to 'auto'"):
         extract.extract(_meta("a.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
     fake.down = True
     with pytest.raises(extract.ApiUnavailable, match="not reachable"):
@@ -166,6 +166,55 @@ def test_ask_with_gemini_and_status_badge(admin, fresh_db, monkeypatch):
     settings.set_value("gemini_api_key", "")
     assert admin.get("/api/config").json()["llm_ready"] is False and llm.refresh_status()["state"] == "no_key"
     assert admin.post("/api/sync").status_code == 400
+
+
+def test_model_auto_picks_the_newest_flash_model_the_key_can_use(admin, fresh_db, monkeypatch):
+    """Google retires model names for new accounts ("gemini-2.5-flash is no longer available to new users…"):
+    with the model set to auto the app asks the key which models it has and takes the newest plain Flash."""
+    assert gemini.pick_model(["embedding-001", "gemini-2.5-flash", "gemini-3.8-flash-lite", "gemini-3.8-flash-preview-0611", "gemini-3.8-flash", "gemini-2.5-pro"]) == "gemini-3.8-flash"
+    assert gemini.pick_model(["gemini-2.5-pro", "gemini-2.5-pro-exp"]) == "gemini-2.5-pro"
+    assert gemini.pick_model(["embedding-001"]) is None
+    fake = FakeGemini(models=("gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-2.5-pro", "embedding-001"))
+    install_fake_gemini(monkeypatch, fake)
+    settings.set_value("gemini_model", "auto")
+    r = admin.post("/api/admin/test-key", json={"provider": "gemini", "key": KEY, "model": "auto"}).json()
+    assert r["ok"] and r["model"] == "gemini-3.8-flash" and "chosen automatically" in r["message"]
+    fields, model = extract.extract(_meta("INV-1.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+    assert model == "gemini/gemini-3.8-flash" and fake.requests[-1]["_model"] == "gemini-3.8-flash"
+    n_before = len([1 for _ in fake.requests])
+    extract.extract(_meta("INV-2.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))  # the model list is cached, not fetched again
+    assert len(fake.requests) == n_before + 1
+    # the retired name still gives a clear message pointing at auto
+    settings.set_value("gemini_model", "gemini-2.5-flash")
+    with pytest.raises(gemini.ModelMissing, match="auto"):
+        extract.extract(_meta("INV-3.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+    r = admin.post("/api/admin/test-key", json={"provider": "gemini", "key": KEY, "model": "gemini-2.5-flash"}).json()
+    assert r["ok"] is False and "Use gemini-3.8-flash or set the model to auto" in r["message"]
+    assert llm.health()["model"] == "gemini-2.5-flash" and llm.health()["state"] == "key_invalid"
+    settings.set_value("gemini_model", "auto")
+    h = llm.health()
+    assert h["state"] == "ready" and h["model"] == "gemini-3.8-flash"
+
+
+def test_a_broken_fallback_reader_fails_the_file_not_the_run(admin, fresh_db, monkeypatch, tmp_path):
+    """Ollama reads text; Gemini is the fallback for photos but its model name is retired: the photo fails, the run goes on."""
+    ol, ge = FakeOllama(), FakeGemini(models=("gemini-3.8-flash",))
+    install_fake_ollama(monkeypatch, ol)
+    install_fake_gemini(monkeypatch, ge, as_provider=False)
+    settings.set_many({"llm_fallback": "gemini", "gemini_model": "gemini-2.5-flash"})  # retired name
+    folder = tmp_path / "Docs"
+    folder.mkdir()
+    (folder / "till.jpg").write_bytes(jpeg_bytes())
+    for i in range(3):
+        (folder / f"INV-{i}.txt").write_text(INVOICE_TEXT, encoding="utf-8")
+    src = admin.post("/api/admin/sources", json={"kind": "local", "name": "Docs", "local_folder": str(folder)}).json()
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    st = sync.status()
+    assert st["message"] == "Sync complete" and st["processed"] == 3 and st["errors"] == 1
+    docs = {d["name"]: d for d in admin.get("/api/documents?limit=100").json()}
+    assert docs["till.jpg"]["status"] == "error" and "fallback reader Gemini" in docs["till.jpg"]["error"] and "auto" in docs["till.jpg"]["error"]
+    assert all(docs[f"INV-{i}.txt"]["status"] == "done" for i in range(3))
+    assert admin.get("/api/admin/sources").json()[0]["last_status"] == "errors"
 
 
 def test_a_skipped_photo_can_be_re_read_with_another_reader(admin, fresh_db, monkeypatch, tmp_path):

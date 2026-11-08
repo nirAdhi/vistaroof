@@ -84,7 +84,7 @@ if LLM_PROVIDER not in PROVIDERS:
 _fb = os.getenv("LLM_FALLBACK", "").strip().lower()
 LLM_FALLBACK = "claude" if _fb in ("1", "true", "yes", "on") else (_fb if _fb in PROVIDERS else "")  # second reader, or ""
 GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").strip().rstrip("/")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "auto").strip() or "auto"  # auto = newest Flash model the key can use
 GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "120"))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip().rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b").strip()

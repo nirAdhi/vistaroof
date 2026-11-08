@@ -270,14 +270,15 @@
   $("#testGeminiKeyBtn").addEventListener("click", async () => {
     const btn = $("#testGeminiKeyBtn"); btn.disabled = true; btn.textContent = "Testing…";
     try {
-      const r = await api("/api/admin/test-key", { method: "POST", body: JSON.stringify({ provider: "gemini", key: $('#geminiForm [name="gemini_api_key"]').value, model: $('#geminiForm [name="gemini_model"]').value }) });
+      const r = await api("/api/admin/test-key", { method: "POST", body: JSON.stringify({ provider: "gemini", key: $('#geminiForm [name="gemini_api_key"]').value, model: $('#geminiForm [name="gemini_model"]').value || "auto" }) });
       $("#geminiKeyStatus").innerHTML = `<span class="${r.ok ? "ok" : "missing"}">${esc(r.message)}</span>${r.models ? `<br><span class="muted">Models this key can use: ${esc(r.models.join(", "))}</span>` : ""}`;
+      if (r.models) $("#geminiModels").innerHTML = `<option value="auto">auto — newest Flash model for this key</option>` + r.models.map((m) => `<option value="${esc(m)}">`).join("");
     } catch (err) { $("#geminiKeyStatus").innerHTML = `<span class="missing">${esc(err.message)}</span>`; }
     btn.disabled = false; btn.textContent = "Test key";
   });
   $("#geminiForm").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const body = { gemini_model: $('#geminiForm [name="gemini_model"]').value.trim() || "gemini-2.5-flash" };
+    const body = { gemini_model: $('#geminiForm [name="gemini_model"]').value.trim() || "auto" };
     const key = $('#geminiForm [name="gemini_api_key"]').value.trim();
     if (key) body.gemini_api_key = key;
     try { await api("/api/admin/settings", { method: "PUT", body: JSON.stringify(body) }); $('#geminiForm [name="gemini_api_key"]').value = ""; $("#geminiSaved").textContent = "Saved"; await load(); setTimeout(() => ($("#geminiSaved").textContent = ""), 2500); }

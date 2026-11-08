@@ -820,7 +820,7 @@ def admin_update_settings(body: SettingsPatch) -> dict[str, Any]:
     if "gemini_model" in changes:
         m = (changes["gemini_model"] or "").strip()
         if not _MODEL_NAME_RE.match(m):
-            raise HTTPException(400, "model name: letters, digits, dots, dashes only (e.g. gemini-2.5-flash)")
+            raise HTTPException(400, "model name: letters, digits, dots, dashes only (e.g. gemini-3.8-flash), or auto")
         changes["gemini_model"] = m
     if "llm_provider" in changes:
         changes["llm_provider"] = (changes["llm_provider"] or "").strip().lower()

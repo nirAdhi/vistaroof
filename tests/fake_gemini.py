@@ -78,6 +78,7 @@ class FakeGemini:
                 self.flaky_503 -= 1
                 return httpx.Response(503, json={"error": {"code": 503, "status": "UNAVAILABLE", "message": "The model is overloaded"}})
             body = json.loads(request.content)
+            body["_model"] = model  # the model travels in the URL; keep it with the request for assertions
             self.requests.append(body)
             if self.answers:
                 a = self.answers.pop(0)
@@ -94,7 +95,8 @@ def install_fake_gemini(monkeypatch, fake: FakeGemini, *, as_provider: bool = Tr
     monkeypatch.setattr(gemini, "build_http_client",
                         lambda timeout=None: httpx.Client(base_url=config.GEMINI_BASE_URL, transport=fake.transport(), timeout=5))
     monkeypatch.setattr(gemini, "RETRY_SLEEP", 0)
-    settings.set_many({"gemini_api_key": fake.key, **({"llm_provider": "gemini"} if as_provider else {})})
+    gemini._MODEL_CACHE.clear()
+    settings.set_many({"gemini_api_key": fake.key, "gemini_model": "gemini-2.5-flash", **({"llm_provider": "gemini"} if as_provider else {})})
 
 
 __all__ = ["FULL", "SMALL_CANNED", "KEY", "FakeGemini", "install_fake_gemini"]

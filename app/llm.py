@@ -109,7 +109,8 @@ def health() -> dict[str, Any]:
         t = extract.test_api_key(settings.get("anthropic_api_key").strip())
     else:
         t = gemini.test_api_key(settings.get("gemini_api_key").strip(), settings.provider_model("gemini"))
-    return _set(prov, "ready" if t["ok"] else "key_invalid", t["ok"], t["message"], models=t.get("models"), probe=t.get("probe"))
+    return _set(prov, "ready" if t["ok"] else "key_invalid", t["ok"], t["message"], models=t.get("models"), probe=t.get("probe"),
+                **({"model": t["model"]} if t.get("model") else {}))
 
 
 def refresh_in_background() -> None:
