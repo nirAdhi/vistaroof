@@ -147,6 +147,23 @@ def generate(key: str, model: str, system: str, parts: list[dict[str, Any]], *, 
     return text
 
 
+def generate_resilient(key: str, model: str, system: str, parts: list[dict[str, Any]], **kw: Any) -> tuple[str, str]:
+    """``generate`` that survives a retired model name: resolves ``auto``, and when Google answers NOT_FOUND for
+    a named model it retries once with the newest Flash model the key can use. Returns (text, model used)."""
+    chosen = resolve_model(key, model)
+    try:
+        return generate(key, chosen, system, parts, **kw), chosen
+    except ModelMissing:
+        if model == AUTO:
+            raise
+        _MODEL_CACHE.clear()
+        alt = resolve_model(key, AUTO)
+        if alt == chosen:
+            raise
+        log.warning("gemini: model %s is not available to this key any more; using %s (set the model to 'auto' in Admin)", chosen, alt)
+        return generate(key, alt, system, parts, **kw), alt
+
+
 def list_models(key: str) -> list[str]:
     names: list[str] = []
     token = None

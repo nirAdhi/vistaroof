@@ -84,7 +84,7 @@ def _answer(question: str, summary: dict[str, Any], docs: list[dict[str, Any]], 
         key = settings.get("gemini_api_key").strip()
         if not settings.looks_like_key(key):
             raise ApiUnavailable("No Gemini API key saved. Add one under Admin → Document reader.")
-        text = gemini.generate(key, gemini.resolve_model(key, settings.provider_model("gemini")), system, [{"text": user}], max_tokens=2000)
+        text, _ = gemini.generate_resilient(key, settings.provider_model("gemini"), system, [{"text": user}], max_tokens=2000)
         return text.strip() or "The model returned no answer."
     model = settings.get("ask_model") or settings.get("extract_model") or "claude-opus-5-5"
     common = dict(model=model, max_tokens=4000, system=system, messages=[{"role": "user", "content": user}],

@@ -105,9 +105,9 @@ def test_key_rejected_quota_and_missing_model_stop_the_run(admin, fresh_db, monk
     with pytest.raises(gemini.KeyRejected, match="rejected the key"):
         extract.extract(_meta("a.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
     assert llm.health()["state"] == "key_invalid"
-    settings.set_many({"gemini_api_key": KEY, "gemini_model": "gemini-9-ultra"})
-    with pytest.raises(gemini.ModelMissing, match="set the model to 'auto'|Set the model to 'auto'"):
-        extract.extract(_meta("a.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+    settings.set_many({"gemini_api_key": KEY, "gemini_model": "gemini-9-ultra"})  # unknown name: heals to the newest Flash the key has
+    _, model = extract.extract(_meta("a.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+    assert model == "gemini/gemini-2.5-flash"
     fake.down = True
     with pytest.raises(extract.ApiUnavailable, match="not reachable"):
         extract.extract(_meta("a.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
@@ -184,10 +184,10 @@ def test_model_auto_picks_the_newest_flash_model_the_key_can_use(admin, fresh_db
     n_before = len([1 for _ in fake.requests])
     extract.extract(_meta("INV-2.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))  # the model list is cached, not fetched again
     assert len(fake.requests) == n_before + 1
-    # the retired name still gives a clear message pointing at auto
+    # a retired name heals itself: Google says NOT_FOUND, the app retries with the newest Flash model
     settings.set_value("gemini_model", "gemini-2.5-flash")
-    with pytest.raises(gemini.ModelMissing, match="auto"):
-        extract.extract(_meta("INV-3.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+    fields, model = extract.extract(_meta("INV-3.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+    assert model == "gemini/gemini-3.8-flash" and fields["doc_type"] == "sales_invoice"
     r = admin.post("/api/admin/test-key", json={"provider": "gemini", "key": KEY, "model": "gemini-2.5-flash"}).json()
     assert r["ok"] is False and "Use gemini-3.8-flash or set the model to auto" in r["message"]
     assert llm.health()["model"] == "gemini-2.5-flash" and llm.health()["state"] == "key_invalid"
@@ -197,11 +197,11 @@ def test_model_auto_picks_the_newest_flash_model_the_key_can_use(admin, fresh_db
 
 
 def test_a_broken_fallback_reader_fails_the_file_not_the_run(admin, fresh_db, monkeypatch, tmp_path):
-    """Ollama reads text; Gemini is the fallback for photos but its model name is retired: the photo fails, the run goes on."""
-    ol, ge = FakeOllama(), FakeGemini(models=("gemini-3.8-flash",))
+    """Ollama reads text; Gemini is the fallback for photos but the key has no usable model: the photo fails, the run goes on."""
+    ol, ge = FakeOllama(), FakeGemini(models=("embedding-001",))
     install_fake_ollama(monkeypatch, ol)
     install_fake_gemini(monkeypatch, ge, as_provider=False)
-    settings.set_many({"llm_fallback": "gemini", "gemini_model": "gemini-2.5-flash"})  # retired name
+    settings.set_many({"llm_fallback": "gemini", "gemini_model": "gemini-2.5-flash"})
     folder = tmp_path / "Docs"
     folder.mkdir()
     (folder / "till.jpg").write_bytes(jpeg_bytes())
@@ -212,7 +212,7 @@ def test_a_broken_fallback_reader_fails_the_file_not_the_run(admin, fresh_db, mo
     st = sync.status()
     assert st["message"] == "Sync complete" and st["processed"] == 3 and st["errors"] == 1
     docs = {d["name"]: d for d in admin.get("/api/documents?limit=100").json()}
-    assert docs["till.jpg"]["status"] == "error" and "fallback reader Gemini" in docs["till.jpg"]["error"] and "auto" in docs["till.jpg"]["error"]
+    assert docs["till.jpg"]["status"] == "error" and "fallback reader Gemini" in docs["till.jpg"]["error"] and "no usable Gemini model" in docs["till.jpg"]["error"]
     assert all(docs[f"INV-{i}.txt"]["status"] == "done" for i in range(3))
     assert admin.get("/api/admin/sources").json()[0]["last_status"] == "errors"
 

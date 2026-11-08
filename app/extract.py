@@ -459,9 +459,8 @@ def _extract_gemini(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any
     key = settings.get("gemini_api_key").strip()
     if not settings.looks_like_key(key):
         raise ApiUnavailable("No Gemini API key saved. Add one under Admin → Document reader.")
-    model = gemini.resolve_model(key, settings.provider_model("gemini"))
     parts = _gemini_parts(build_content_blocks(meta, content))
-    text = gemini.generate(key, model, build_system_prompt(), parts, schema=OUTPUT_SCHEMA, max_tokens=8000)
+    text, model = gemini.generate_resilient(key, settings.provider_model("gemini"), build_system_prompt(), parts, schema=OUTPUT_SCHEMA, max_tokens=8000)
     raw = _validate_full(modelout.parse_json_object(text))
     fields = derive(dict(raw))
     fields["raw"] = raw
