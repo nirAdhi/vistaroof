@@ -118,12 +118,17 @@
         <div class="card-head"><div><h2>Revenue vs costs by month</h2><div class="sub">Net of VAT, by document date</div></div><div class="view-toggle" data-chart="monthly"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
         <div id="chart-monthly"></div>
       </div>
+      <div class="card span2">
+        <div class="card-head"><div><h2>Trend</h2><div class="sub">Latest month against the one before, and how revenue, costs and profit have moved month by month</div></div><div class="view-toggle" data-chart="trend"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div class="trend-strip" id="trend-strip"></div>
+        <div id="chart-trend"></div>
+      </div>
       <div class="card">
         <div class="card-head"><div><h2>Cumulative profit</h2><div class="sub">Running total over the period</div></div><div class="view-toggle" data-chart="cumulative"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
         <div id="chart-cumulative"></div>
       </div>
       <div class="card">
-        <div class="card-head"><div><h2>Where the money goes</h2><div class="sub">Costs by category, net of VAT</div></div><div class="view-toggle" data-chart="expcat"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div class="card-head"><div><h2>Where the money goes</h2><div class="sub">Costs by category, net of VAT</div></div><div class="view-toggle" data-chart="expcat"><button class="active" data-mode="chart">Bars</button><button data-mode="pie">Pie</button><button data-mode="table">Table</button></div></div>
         <div id="chart-expcat"></div>
       </div>
       <div class="card">
@@ -142,11 +147,11 @@
     <div class="grid tiles" id="tiles-in"></div>
     <div class="grid two">
       <div class="card">
-        <div class="card-head"><div><h2>Revenue by customer</h2><div class="sub">Sales invoices less credit notes</div></div><div class="view-toggle" data-chart="customers"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div class="card-head"><div><h2>Revenue by customer</h2><div class="sub">Sales invoices less credit notes</div></div><div class="view-toggle" data-chart="customers"><button class="active" data-mode="chart">Bars</button><button data-mode="pie">Pie</button><button data-mode="table">Table</button></div></div>
         <div id="chart-customers"></div>
       </div>
       <div class="card">
-        <div class="card-head"><div><h2>Revenue by type of work</h2><div class="sub">Net of VAT</div></div><div class="view-toggle" data-chart="revcat"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div class="card-head"><div><h2>Revenue by type of work</h2><div class="sub">Net of VAT</div></div><div class="view-toggle" data-chart="revcat"><button class="active" data-mode="chart">Bars</button><button data-mode="pie">Pie</button><button data-mode="table">Table</button></div></div>
         <div id="chart-revcat"></div>
       </div>
       <div class="card span2">
@@ -165,11 +170,11 @@
     <div class="grid tiles" id="tiles-out"></div>
     <div class="grid two">
       <div class="card">
-        <div class="card-head"><div><h2>Spend by supplier</h2><div class="sub">Bills, receipts and payslips, net of VAT</div></div><div class="view-toggle" data-chart="suppliers"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div class="card-head"><div><h2>Spend by supplier</h2><div class="sub">Bills, receipts and payslips, net of VAT</div></div><div class="view-toggle" data-chart="suppliers"><button class="active" data-mode="chart">Bars</button><button data-mode="pie">Pie</button><button data-mode="table">Table</button></div></div>
         <div id="chart-suppliers"></div>
       </div>
       <div class="card">
-        <div class="card-head"><div><h2>Spend by category</h2><div class="sub">Net of VAT</div></div><div class="view-toggle" data-chart="expcat2"><button class="active" data-mode="chart">Chart</button><button data-mode="table">Table</button></div></div>
+        <div class="card-head"><div><h2>Spend by category</h2><div class="sub">Net of VAT</div></div><div class="view-toggle" data-chart="expcat2"><button class="active" data-mode="chart">Bars</button><button data-mode="pie">Pie</button><button data-mode="table">Table</button></div></div>
         <div id="chart-expcat2"></div>
       </div>
       <div class="card span2">

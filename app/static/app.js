@@ -248,6 +248,99 @@
     if (opts.onClick) $$("g[data-name]", el).forEach((g) => g.addEventListener("click", () => opts.onClick(g.dataset.name)));
   }
 
+  /** Donut (part-to-whole): the biggest slices in fixed palette order, the rest folded into "Other"; share labels on
+   *  slices wide enough to carry one, the total in the middle, and a legend list so identity never rests on colour. */
+  function donut(el, rows, opts = {}) {
+    rows = rows.filter((r) => r.amount > 0);
+    if (!rows.length) { el.innerHTML = `<div class="empty">Nothing here for this period</div>`; return; }
+    const total = rows.reduce((a, r) => a + r.amount, 0);
+    const max = opts.slices || 6;
+    let slices = rows.slice(0, max);
+    const rest = rows.slice(max);
+    if (rest.length) slices = slices.concat([{ name: "Other", amount: rest.reduce((a, r) => a + r.amount, 0), count: rest.reduce((a, r) => a + (r.count || 0), 0), other: rest.length }]);
+    const S = 240, cx = 120, cy = 120, R = 108, r = 66;
+    const pt = (ang, rad) => [cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)];
+    let a0 = -Math.PI / 2, paths = "", labels = "";
+    slices.forEach((s, i) => {
+      const share = s.amount / total, a1 = a0 + share * 2 * Math.PI;
+      const fill = s.other ? "var(--muted)" : `var(--cat-${i + 1})`;
+      const nm = opts.labelFn && !s.other ? opts.labelFn(s.name) : s.name;
+      const tipHtml = `<b>${esc(nm)}</b><br>${money(s.amount)} · ${(share * 100).toFixed(1)}%${s.count ? `<br>${s.count} document${s.count === 1 ? "" : "s"}` : ""}${s.other ? `<br>${s.other} smaller categories` : ""}`;
+      let d;
+      if (share > 0.9999) {  // a single slice: two half rings (one arc cannot draw a full circle)
+        const [x1, y1] = pt(a0, R), [x2, y2] = pt(a0 + Math.PI, R), [x3, y3] = pt(a0, r), [x4, y4] = pt(a0 + Math.PI, r);
+        d = `M${x1},${y1} A${R},${R} 0 1 1 ${x2},${y2} A${R},${R} 0 1 1 ${x1},${y1} M${x3},${y3} A${r},${r} 0 1 0 ${x4},${y4} A${r},${r} 0 1 0 ${x3},${y3}`;
+      } else {
+        const large = share > 0.5 ? 1 : 0;
+        const [x1, y1] = pt(a0, R), [x2, y2] = pt(a1, R), [x3, y3] = pt(a1, r), [x4, y4] = pt(a0, r);
+        d = `M${x1},${y1} A${R},${R} 0 ${large} 1 ${x2},${y2} L${x3},${y3} A${r},${r} 0 ${large} 0 ${x4},${y4} Z`;
+      }
+      paths += `<g tabindex="0" data-tip="${esc(tipHtml)}" ${opts.onClick && !s.other ? `data-name="${esc(s.name)}" style="cursor:pointer"` : ""}><path class="mark" d="${d}" fill="${fill}" fill-rule="evenodd" stroke="var(--surface)" stroke-width="2"/></g>`;
+      if (share >= 0.08) { const [lx, ly] = pt((a0 + a1) / 2, (R + r) / 2); labels += `<text class="slice ${i === 3 && !s.other ? "dark" : ""}" x="${lx}" y="${ly + 4}" text-anchor="middle">${Math.round(share * 100)}%</text>`; }
+      a0 = a1;
+    });
+    const legend = slices.map((s, i) => `<li><i style="background:${s.other ? "var(--muted)" : `var(--cat-${i + 1})`}"></i><span class="name">${esc(opts.labelFn && !s.other ? opts.labelFn(s.name) : s.name)}</span><span class="pct">${(s.amount / total * 100).toFixed(0)}%</span><span class="amt">${money(s.amount, false)}</span></li>`).join("");
+    el.innerHTML = `<div class="chart-wrap donut-wrap"><svg viewBox="0 0 ${S} ${S}" role="img" aria-label="${esc(opts.aria || "share chart")}">${paths}${labels}
+      <text class="center" x="${cx}" y="${cy + 2}" text-anchor="middle">${esc(compact(total))}</text><text class="center-sub" x="${cx}" y="${cy + 18}" text-anchor="middle">${esc(opts.centerLabel || "total")}</text></svg><ul class="donut-legend">${legend}</ul></div>`;
+    bindTips(el);
+    if (opts.onClick) $$("g[data-name]", el).forEach((g) => g.addEventListener("click", () => opts.onClick(g.dataset.name)));
+  }
+
+  /** Several lines on one axis (same unit): 2px lines, ringed markers, direct end labels, one tooltip per month listing every series. */
+  function multiLine(el, rows, series, opts = {}) {
+    if (!rows.length) { el.innerHTML = `<div class="empty">No data for this period</div>`; return; }
+    const W = 900, H = 260, padL = 56, padR = 96, padT = 14, padB = 30;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const vals = rows.flatMap((r) => series.map((s) => r[s.key] || 0));
+    if (!vals.some((v) => v)) { el.innerHTML = `<div class="empty">No data for this period</div>`; return; }
+    const maxV = niceMax(Math.max(...vals, 0)), minRaw = Math.min(0, ...vals);
+    const minV = minRaw < 0 ? -niceMax(-minRaw) : 0;
+    const y = (v) => padT + plotH * (1 - (v - minV) / (maxV - minV));
+    const x = (i) => padL + (rows.length === 1 ? plotW / 2 : plotW * i / (rows.length - 1));
+    let g = "";
+    for (let i = 0; i <= 4; i++) { const v = minV + (maxV - minV) * i / 4; g += `<line class="gridline" x1="${padL}" x2="${W - padR}" y1="${y(v)}" y2="${y(v)}"/><text x="${padL - 6}" y="${y(v) + 4}" text-anchor="end">${compact(v)}</text>`; }
+    const band = rows.length > 1 ? plotW / (rows.length - 1) : plotW;
+    let hits = "";
+    rows.forEach((r, i) => {
+      const t = `<b>${esc(monthLabel(r.month))}</b><br>` + series.map((s) => `${esc(s.label)}: ${money(r[s.key] || 0)}`).join("<br>");
+      hits += `<g tabindex="0" data-tip="${esc(t)}"><rect class="xhit" x="${x(i) - band / 2}" y="${padT}" width="${band}" height="${plotH}"/></g>`;
+    });
+    let lines = "", ends = "";
+    const lastYs = [];
+    series.forEach((s) => {
+      const pts = rows.map((r, i) => `${x(i)},${y(r[s.key] || 0)}`);
+      lines += `<path d="M${pts.join(" L")}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+      rows.forEach((r, i) => { lines += `<circle cx="${x(i)}" cy="${y(r[s.key] || 0)}" r="6" fill="var(--surface)"/><circle class="mark" cx="${x(i)}" cy="${y(r[s.key] || 0)}" r="4" fill="${s.color}"/>`; });
+      const last = rows[rows.length - 1]; let ly = y(last[s.key] || 0) + 4;
+      while (lastYs.some((v) => Math.abs(v - ly) < 13)) ly += 13;  // keep end labels from overlapping
+      lastYs.push(ly);
+      ends += `<text class="ink" x="${x(rows.length - 1) + 10}" y="${ly}" font-weight="600">${esc(s.label)} ${compact(last[s.key] || 0)}</text>`;
+    });
+    const every = rows.length > 12 ? 3 : rows.length > 6 ? 2 : 1;
+    const xl = rows.map((r, i) => i % every === 0 ? `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${esc(monthLabel(r.month))}</text>` : "").join("");
+    el.innerHTML = `<div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.aria || "trend lines")}">${g}<line class="baseline" x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}"/>${hits}${lines}${ends}${xl}</svg>
+      <div class="legend">${series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join("")}</div></div>`;
+    bindTips(el);
+  }
+
+  /** The strip above the trend lines: the latest month with activity against the month before it. */
+  function renderTrendStrip(el, monthly, periodTo) {
+    const active = monthly.filter((m) => m.revenue || m.expenses);
+    if (active.length < 2) { el.innerHTML = `<div class="muted small">Not enough months in this period for a month-on-month trend yet.</div>`; return; }
+    const cur = active[active.length - 1], prev = active[active.length - 2];
+    const partial = periodTo && cur.month === periodTo.slice(0, 7) && periodTo.slice(8, 10) !== "31";
+    const stat = (label, key, goodWhenUp) => {
+      const a = cur[key] || 0, b = prev[key] || 0;
+      const change = b ? (a - b) / Math.abs(b) * 100 : null;
+      const dir = change == null ? "" : change > 0.5 ? "up" : change < -0.5 ? "down" : "";
+      const good = dir === "" ? "" : (dir === "up") === goodWhenUp ? "up" : "down";
+      const arrow = dir === "up" ? "▲" : dir === "down" ? "▼" : "▶";
+      return `<div class="trend-stat"><div class="label">${esc(label)} · ${esc(monthLabel(cur.month))}${partial ? " so far" : ""}</div><div class="value ${a < 0 ? "neg" : ""}">${money(a, false)}</div>
+        <div class="delta ${good}">${change == null ? "no figure for the month before" : `${arrow} ${Math.abs(change).toFixed(0)}% vs ${esc(monthLabel(prev.month))} (${money(b, false)})`}</div></div>`;
+    };
+    el.innerHTML = stat("Revenue", "revenue", true) + stat("Costs", "expenses", false) + stat("Profit", "profit", true);
+  }
+
   function tableHtml(cols, rows, opts = {}) {
     if (!rows.length) return `<div class="empty">${esc(opts.empty || "Nothing here for this period")}</div>`;
     const th = cols.map((c) => `<th class="${c.num ? "num" : ""}">${esc(c.label)}</th>`).join("");
@@ -256,10 +349,11 @@
   }
 
   /** Chart card with a chart/table toggle. renderChart(el) and tableRows() supplied by caller. */
-  function chartCard(id, renderChart, tableCols, tableRows) {
+  function chartCard(id, renderChart, tableCols, tableRows, renderPie) {
     const el = $(`#chart-${id}`);
     const mode = state.chartModes[id] || "chart";
     if (mode === "chart") renderChart(el);
+    else if (mode === "pie" && renderPie) renderPie(el);
     else el.innerHTML = `<div class="table-scroll" style="max-height:320px">${tableHtml(tableCols, tableRows())}</div>`;
     const toggle = $(`.view-toggle[data-chart="${id}"]`);
     if (toggle) $$("button", toggle).forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
@@ -488,8 +582,12 @@
     ];
     chartCard("monthly", (el) => groupedColumns(el, s.monthly, series, { aria: "Revenue and costs by month", extra: (r) => `Profit: ${money(r.profit)}` }), monthCols, () => s.monthly);
     chartCard("cumulative", (el) => lineChart(el, s.monthly, "cumulative_profit", "var(--profit)", { label: "Cumulative profit", aria: "Cumulative profit" }), monthCols, () => s.monthly);
+    renderTrendStrip($("#trend-strip"), s.monthly, s.period.to);
+    const trendSeries = [{ key: "revenue", label: "Revenue", color: "var(--cat-1)" }, { key: "expenses", label: "Costs", color: "var(--cat-2)" }, { key: "profit", label: "Profit", color: "var(--cat-3)" }];
+    chartCard("trend", (el) => multiLine(el, s.monthly, trendSeries, { aria: "Revenue, costs and profit by month" }), monthCols, () => s.monthly);
     const catCols = [{ key: "name", label: "Category", render: (r) => esc(label(r.name)) }, { key: "count", label: "Docs", num: true }, { key: "amount", label: "Amount", num: true, render: (r) => money(r.amount) }];
-    chartCard("expcat", (el) => hbars(el, s.expenses_by_category, "var(--expense)", { labelFn: label, aria: "Costs by category" }), catCols, () => s.expenses_by_category);
+    chartCard("expcat", (el) => hbars(el, s.expenses_by_category, "var(--expense)", { labelFn: label, aria: "Costs by category" }), catCols, () => s.expenses_by_category,
+      (el) => donut(el, s.expenses_by_category, { labelFn: label, aria: "Share of costs by category", centerLabel: "costs" }));
 
     // ---- Attention
     const att = s.attention;
@@ -527,8 +625,10 @@
     ].join("");
     const cpCols = [{ key: "name", label: "Name" }, { key: "count", label: "Docs", num: true }, { key: "amount", label: "Amount", num: true, render: (r) => money(r.amount) }];
     const goDocsFor = (name) => openCompany(name);
-    chartCard("customers", (el) => hbars(el, s.top_customers, "var(--revenue)", { aria: "Revenue by customer", onClick: goDocsFor }), cpCols, () => s.top_customers);
-    chartCard("revcat", (el) => hbars(el, s.revenue_by_category, "var(--revenue)", { labelFn: label, aria: "Revenue by category" }), catCols, () => s.revenue_by_category);
+    chartCard("customers", (el) => hbars(el, s.top_customers, "var(--revenue)", { aria: "Revenue by customer", onClick: goDocsFor }), cpCols, () => s.top_customers,
+      (el) => donut(el, s.top_customers, { aria: "Share of revenue by customer", centerLabel: "revenue", onClick: goDocsFor }));
+    chartCard("revcat", (el) => hbars(el, s.revenue_by_category, "var(--revenue)", { labelFn: label, aria: "Revenue by category" }), catCols, () => s.revenue_by_category,
+      (el) => donut(el, s.revenue_by_category, { labelFn: label, aria: "Share of revenue by type of work", centerLabel: "revenue" }));
     const openCols = [
       { key: "counterparty", label: "Who", render: (r) => companyLink(r.counterparty) },
       { key: "document_number", label: "Number", render: (r) => esc(r.document_number || "—") },
@@ -559,8 +659,10 @@
       tile({ label: "Overdue", value: t.overdue_payables, sub: `${t.overdue_payables_count} bills past due date`, color: "var(--critical)", pct: t.payables ? t.overdue_payables / t.payables * 100 : 0 }),
       tile({ label: "Committed (purchase orders)", value: t.commitments, sub: `${t.commitments_count} POs not yet billed` }),
     ].join("");
-    chartCard("suppliers", (el) => hbars(el, s.top_suppliers, "var(--expense)", { aria: "Spend by supplier", onClick: goDocsFor }), cpCols, () => s.top_suppliers);
-    chartCard("expcat2", (el) => hbars(el, s.expenses_by_category, "var(--expense)", { labelFn: label, aria: "Spend by category", limit: 20 }), catCols, () => s.expenses_by_category);
+    chartCard("suppliers", (el) => hbars(el, s.top_suppliers, "var(--expense)", { aria: "Spend by supplier", onClick: goDocsFor }), cpCols, () => s.top_suppliers,
+      (el) => donut(el, s.top_suppliers, { aria: "Share of spend by supplier", centerLabel: "spend", onClick: goDocsFor }));
+    chartCard("expcat2", (el) => hbars(el, s.expenses_by_category, "var(--expense)", { labelFn: label, aria: "Spend by category", limit: 20 }), catCols, () => s.expenses_by_category,
+      (el) => donut(el, s.expenses_by_category, { labelFn: label, aria: "Share of spend by category", centerLabel: "spend" }));
     $("#payables").innerHTML = `<div class="table-scroll">${tableHtml(openCols, s.open_payables, { empty: "No unpaid supplier bills in this period" })}</div>`;
     bindDocLinks($("#payables")); bindPreviews($("#payables"), s.open_payables); bindCompanies($("#payables"));
 
