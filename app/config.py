@@ -23,9 +23,10 @@ ADMIN_PASSWORD    Built-in admin password, applied at every start (10+ character
                   changed from the UI: edit the file and restart instead.
 ADMIN_EMAIL       Sign-in name for that admin; when set, the login boxes require it and an empty
                   email is refused. Without it the admin signs in with the email field left empty.
-LLM_PROVIDER      ``ollama`` (default) or ``claude``: which model reads the documents.
-LLM_FALLBACK      ``1`` lets an Ollama setup send a file to Claude when Ollama is unreachable or the
-                  file is a photo / scanned PDF (needs a saved Claude key).
+LLM_PROVIDER      ``ollama`` (default), ``claude`` or ``gemini``: which model reads the documents.
+LLM_FALLBACK      A second reader (``claude`` / ``gemini`` / ``ollama``; ``1`` = claude) used when the
+                  first is unreachable, unfunded, or cannot read a photo / scanned PDF.
+GEMINI_API_KEY / GEMINI_MODEL   Google Gemini key (initial value; Admin stores it encrypted) and model.
 OLLAMA_BASE_URL   The Ollama server, e.g. ``http://192.168.0.183:11434`` (default: localhost).
 OLLAMA_MODEL      Model name as shown by ``ollama list`` (default ``qwen2.5:3b``).
 OLLAMA_NUM_CTX / OLLAMA_TIMEOUT / OLLAMA_KEEP_ALIVE   context tokens (min 8192), seconds, keep-alive.
@@ -67,12 +68,18 @@ ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip().lower()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
 # Which model reads the documents (see app/llm.py). ``ollama`` = self-hosted, text only, nothing leaves
-# the network; ``claude`` = Anthropic API (also reads photos and scanned PDFs). No addresses are
-# hard-coded here: the Ollama server's address comes from .env (OLLAMA_BASE_URL).
+# the network; ``claude`` = Anthropic API and ``gemini`` = Google API (both read photos and scanned
+# PDFs). No addresses are hard-coded here: the Ollama server's address comes from .env.
+PROVIDERS = ("ollama", "claude", "gemini")
+PROVIDER_LABELS = {"ollama": "Ollama", "claude": "Claude", "gemini": "Gemini"}
 LLM_PROVIDER = (os.getenv("LLM_PROVIDER", "ollama").strip().lower() or "ollama")
-if LLM_PROVIDER not in ("ollama", "claude"):
-    raise RuntimeError(f"LLM_PROVIDER must be 'ollama' or 'claude', not {LLM_PROVIDER!r}")
-LLM_FALLBACK = os.getenv("LLM_FALLBACK", "0").strip().lower() in ("1", "true", "yes", "on")  # Ollama → Claude when needed
+if LLM_PROVIDER not in PROVIDERS:
+    raise RuntimeError(f"LLM_PROVIDER must be one of {', '.join(PROVIDERS)}, not {LLM_PROVIDER!r}")
+_fb = os.getenv("LLM_FALLBACK", "").strip().lower()
+LLM_FALLBACK = "claude" if _fb in ("1", "true", "yes", "on") else (_fb if _fb in PROVIDERS else "")  # second reader, or ""
+GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").strip().rstrip("/")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "120"))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip().rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b").strip()
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))          # tokens of context the model is given (min 8192)
@@ -87,8 +94,10 @@ ENV_DEFAULTS = {
     "base_currency": os.getenv("BASE_CURRENCY", "EUR"),
     "country": os.getenv("COUNTRY", "Ireland"),
     "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY", ""),
-    "llm_provider": LLM_PROVIDER,                 # Admin → Claude API can switch it; .env is the default
-    "llm_fallback": "1" if LLM_FALLBACK else "0",
+    "llm_provider": LLM_PROVIDER,                 # Admin → Document reader can switch it; .env is the default
+    "llm_fallback": LLM_FALLBACK,                 # "" | claude | gemini | ollama
+    "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
+    "gemini_model": GEMINI_MODEL,
     "extract_model": os.getenv("EXTRACT_MODEL", "claude-opus-5-5"),
     "extract_effort": os.getenv("EXTRACT_EFFORT", "medium"),
     "ask_model": os.getenv("ASK_MODEL", ""),

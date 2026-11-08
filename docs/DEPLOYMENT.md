@@ -41,14 +41,18 @@ ADMIN_EMAIL=you@example.com     # sign-in name; required at login once set
 ADMIN_PASSWORD=<10+ characters>
 ```
 
-**Document reader.** `LLM_PROVIDER=claude` uses the Anthropic API with the key saved in Admin;
-`LLM_PROVIDER=ollama` (the default when the variable is absent) uses a self-hosted Ollama server:
+**Document reader.** `LLM_PROVIDER=claude` uses the Anthropic API, `gemini` the Google Gemini API
+(keys saved in Admin, encrypted); `ollama` (the default when the variable is absent) uses a
+self-hosted Ollama server. The admin can change the reader and the fallback later in Admin →
+Document reader; the environment only sets the starting values.
 
 ```
-LLM_PROVIDER=ollama
+LLM_PROVIDER=ollama                          # ollama | claude | gemini
+LLM_FALLBACK=                                # second reader when the first is unreachable / unfunded / cannot read a photo
 OLLAMA_BASE_URL=http://192.168.0.183:11434   # must be reachable from the app container; never expose it publicly
 OLLAMA_MODEL=qwen2.5:3b                      # ollama pull qwen2.5:3b on that machine
-LLM_FALLBACK=0                               # 1 = send photos / scanned PDFs (and everything while Ollama is down) to Claude
+# GEMINI_API_KEY=                            # or paste it in Admin; use a project with billing enabled (see docs/SECURITY.md)
+# GEMINI_MODEL=gemini-2.5-flash
 ```
 
 Verify from inside the container with `python -m app.llm_check` (Docker:

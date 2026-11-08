@@ -26,6 +26,8 @@ os.environ["ADMIN_PASSWORD"] = ""
 os.environ["LLM_PROVIDER"] = "claude"  # the suite fakes Claude; tests/test_ollama.py switches the provider itself
 os.environ["LLM_FALLBACK"] = "0"
 os.environ["OLLAMA_BASE_URL"] = "http://ollama.test:11434"  # never a real host: the Ollama tests route httpx through a fake
+os.environ["GEMINI_BASE_URL"] = "https://gemini.test/v1beta"  # same for Gemini
+os.environ["GEMINI_API_KEY"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -235,7 +237,8 @@ def fresh_db():
         conn.execute("DELETE FROM sources")
         conn.execute("DELETE FROM sync_runs")
         conn.execute("DELETE FROM users")
-        conn.execute("DELETE FROM settings WHERE key IN ('anthropic_api_key', 'google_client_config', 'ms_client_config', 'llm_provider', 'llm_fallback')")
+        conn.execute("DELETE FROM settings WHERE key IN ('anthropic_api_key', 'gemini_api_key', 'gemini_model', 'google_client_config', "
+                     "'ms_client_config', 'llm_provider', 'llm_fallback')")
     settings.invalidate()
 
 

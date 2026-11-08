@@ -38,7 +38,7 @@ from typing import Any
 
 import anthropic
 
-from . import config, images, ollama, settings, textract
+from . import config, gemini, images, modelout, ollama, settings, textract
 from .errors import ApiUnavailable  # noqa: F401  (re-exported: sync and the tests use extract.ApiUnavailable)
 from .sources import FileContent, FileMeta
 
@@ -377,12 +377,66 @@ def derive(fields: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+ROLES = ("customer", "supplier", "employee", "authority", "bank", "other")
+
+
+def _validate_full(obj: dict[str, Any]) -> dict[str, Any]:
+    """Normalise a full-schema answer (Claude / Gemini): enums back to known values, strings bounded.
+
+    Structured output makes this mostly a no-op for Claude; for Gemini (looser schema support) and as
+    defence in depth it keeps anything odd from a model out of the ledger."""
+    out = dict(obj)
+    doc_type, direction, status = _norm(obj.get("doc_type")), _norm(obj.get("direction")), _norm(obj.get("payment_status"))
+    cat, role = _norm(obj.get("category")) or None, _norm(obj.get("counterparty_role")) or None
+    out["doc_type"] = doc_type if doc_type in DOC_TYPES else "other"
+    out["direction"] = direction if direction in DIRECTIONS else "none"
+    out["payment_status"] = status if status in PAYMENT_STATUSES else "unknown"
+    out["category"] = cat if cat in EXPENSE_CATEGORIES or cat in INCOME_CATEGORIES else None
+    out["counterparty_role"] = role if role in ROLES else None
+    out["line_items"] = [li for li in (obj.get("line_items") or []) if isinstance(li, dict)][:200]
+    out["flags"] = [str(f)[:60] for f in (obj.get("flags") or []) if f][:20]
+    out["summary"] = str(obj.get("summary") or "")[:500]
+    for k in ("counterparty", "document_number", "issue_date", "due_date", "currency", "project"):
+        v = obj.get(k)
+        out[k] = (str(v).strip()[:200] or None) if v not in (None, "") else None
+    out["confidence"] = _small_num(obj.get("confidence"))
+    return out
+
+
 def _extract_claude(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
     blocks = build_content_blocks(meta, content)
     raw, model = _call_model(blocks)
+    raw = _validate_full(raw)
     fields = derive(dict(raw))
     fields["raw"] = raw
     return fields, model
+
+
+# ------------------------------------------------------------------ Gemini (Google)
+
+
+def _gemini_parts(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Claude content blocks → Gemini parts (PDF / image bytes as inlineData, text as text)."""
+    parts = []
+    for b in blocks:
+        if b["type"] == "text":
+            parts.append({"text": b["text"]})
+        else:
+            parts.append({"inlineData": {"mimeType": b["source"]["media_type"], "data": b["source"]["data"]}})
+    return parts
+
+
+def _extract_gemini(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
+    key = settings.get("gemini_api_key").strip()
+    if not settings.looks_like_key(key):
+        raise ApiUnavailable("No Gemini API key saved. Add one under Admin → Document reader.")
+    model = settings.provider_model("gemini")
+    parts = _gemini_parts(build_content_blocks(meta, content))
+    text = gemini.generate(key, model, build_system_prompt(), parts, schema=OUTPUT_SCHEMA, max_tokens=8000)
+    raw = _validate_full(modelout.parse_json_object(text))
+    fields = derive(dict(raw))
+    fields["raw"] = raw
+    return fields, f"gemini/{model}"
 
 
 # ------------------------------------------------------------------ small local model (Ollama)
@@ -468,11 +522,11 @@ def _norm(v: Any) -> str:
 def _validate_small(obj: dict[str, Any]) -> dict[str, Any]:
     """Check and normalise the small model's answer. Raises ValueError (→ retry) for a bad category/direction."""
     category = _norm(obj.get("category"))
-    if category not in DOC_TYPES:
-        raise ValueError(f"category must be one of {', '.join(DOC_TYPES)} (got {obj.get('category')!r})")
+    if category not in DOC_TYPES:  # the model's own text is quoted back to it, bounded so a hostile document cannot bloat logs
+        raise ValueError(f"category must be one of {', '.join(DOC_TYPES)} (got {str(obj.get('category'))[:60]!r})")
     direction = _norm(obj.get("direction"))
     if direction not in DIRECTIONS:
-        raise ValueError(f"direction must be one of {', '.join(DIRECTIONS)} (got {obj.get('direction')!r})")
+        raise ValueError(f"direction must be one of {', '.join(DIRECTIONS)} (got {str(obj.get('direction'))[:60]!r})")
     status = _norm(obj.get("payment_status"))
     cost = _norm(obj.get("cost_category")) or None
     conf = _small_num(obj.get("confidence"))
@@ -508,24 +562,13 @@ def _small_to_fields(obj: dict[str, Any], truncated: bool) -> dict[str, Any]:
     }
 
 
-def _claude_fallback_available() -> bool:
-    return settings.llm_fallback() and settings.has_api_key()
-
-
 def small_text_budget() -> int:
     """How many characters of document text fit next to the prompt in the model's context."""
     return max(4000, (max(config.OLLAMA_NUM_CTX, 8192) - SMALL_PROMPT_RESERVE_TOKENS) * CHARS_PER_TOKEN)
 
 
 def _extract_ollama(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
-    try:
-        text = textract.document_text(meta, content)
-    except textract.NeedsVision as exc:
-        if _claude_fallback_available():
-            log.info("%s: %s, handing it to Claude (LLM_FALLBACK)", meta.name, exc)
-            return _extract_claude(meta, content)
-        raise ValueError(f"{exc}: the text-only model ({config.OLLAMA_MODEL}) cannot read it. "
-                         "Set LLM_FALLBACK=1 with a Claude key, or LLM_PROVIDER=claude.") from exc
+    text = textract.document_text(meta, content)  # NeedsVision (photo / scan) propagates to extract()
     if len(text) > 300_000:
         raise ValueError("text file too large to process")
     text, truncated = textract.fit(text, small_text_budget())
@@ -533,20 +576,40 @@ def _extract_ollama(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any
         {"role": "system", "content": build_small_prompt()},
         {"role": "user", "content": f"File name: {meta.name}\nFolder: {meta.folder}\n\n<document_text>\n{text}\n</document_text>\n\nReturn the JSON object."},
     ]
-    try:
-        obj, attempts = ollama.chat_json(messages, SMALL_SCHEMA, _validate_small, num_predict=700)
-    except ApiUnavailable as exc:
-        if _claude_fallback_available():
-            log.warning("%s: %s — handing it to Claude (LLM_FALLBACK)", meta.name, exc)
-            return _extract_claude(meta, content)
-        raise
+    obj, attempts = ollama.chat_json(messages, SMALL_SCHEMA, _validate_small, num_predict=700)
     fields = derive(_small_to_fields(obj, truncated))
     fields["raw"] = {**obj, "attempts": attempts}
     return fields, f"ollama/{config.OLLAMA_MODEL}"
 
 
+# ------------------------------------------------------------------ provider dispatch
+
+EXTRACTORS = {"claude": _extract_claude, "ollama": _extract_ollama, "gemini": _extract_gemini}
+
+
+def fallback_for(primary: str) -> str | None:
+    """The second reader to use for ``primary``, if one is configured, different and ready."""
+    fb = settings.llm_fallback_provider()
+    return fb if fb and fb != primary and settings.provider_ready(fb) else None
+
+
 def extract(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
-    """Read one document with the configured provider. Returns (fields, model name)."""
-    if settings.llm_provider() == "ollama":
-        return _extract_ollama(meta, content)
-    return _extract_claude(meta, content)
+    """Read one document with the chosen reader, falling back to the second one when the first cannot.
+
+    Falls back on ``ApiUnavailable`` (unreachable, unfunded, key rejected, model missing) and on
+    ``textract.NeedsVision`` (a text-only model given a photo / scanned PDF). Returns (fields, model)."""
+    primary = settings.llm_provider()
+    fb = fallback_for(primary)
+    try:
+        return EXTRACTORS[primary](meta, content)
+    except textract.NeedsVision as exc:
+        if fb:
+            log.info("%s: %s — handing it to %s (fallback reader)", meta.name, exc, fb)
+            return EXTRACTORS[fb](meta, content)
+        raise ValueError(f"{exc}: the text-only model ({config.OLLAMA_MODEL}) cannot read it. Choose Claude or Gemini as the "
+                         "fallback reader in Admin → Document reader (needs that key), or as the reader.") from exc
+    except ApiUnavailable as exc:
+        if fb:
+            log.warning("%s: %s — handing it to %s (fallback reader)", meta.name, exc, fb)
+            return EXTRACTORS[fb](meta, content)
+        raise

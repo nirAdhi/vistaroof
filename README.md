@@ -41,24 +41,30 @@ faster previews). Untick "Allow uploads" on a source and the app never asks for 
 The dashboard ships with demo data (including generated sample pages for previews) so it can be
 explored before anything is connected.
 
-## Which model reads the documents (Ollama or Claude)
+## Which model reads the documents (Ollama, Claude or Gemini)
 
-`LLM_PROVIDER` in `.env` (or `.env.production`) picks the backend; the default is `ollama`.
+The reader is chosen under Admin → Document reader (default from `LLM_PROVIDER` in `.env`;
+`ollama` when unset). A second reader can be named as the fallback.
 
-| | `LLM_PROVIDER=ollama` (default) | `LLM_PROVIDER=claude` |
-|---|---|---|
-| Where the text goes | A self-hosted Ollama server on your network; nothing leaves the LAN | The Anthropic API |
-| Reads | Text PDFs, Excel, Word, text/CSV (the text is extracted first, see `app/textract.py`) | Everything, including photos and scanned PDFs |
-| Needs | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` (e.g. `qwen2.5:3b`) | A Claude key saved in Admin → Claude API |
-| Prompt | Short prompt + flat JSON schema written for a 3B model (`extract.SMALL_PROMPT`) | Full prompt + nested schema |
+| | `ollama` (default) | `claude` | `gemini` |
+|---|---|---|---|
+| Where the content goes | A self-hosted Ollama server on your network; nothing leaves the LAN | The Anthropic API | The Google Gemini API |
+| Reads | Text PDFs, Excel, Word, text/CSV (text is extracted first, `app/textract.py`) | Everything, incl. photos and scanned PDFs | Everything, incl. photos and scanned PDFs |
+| Needs | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` (e.g. `qwen2.5:3b`) | A Claude key (Admin) | A Gemini key (Admin), model e.g. `gemini-2.5-flash` |
+| Prompt | Short prompt + flat JSON schema written for a 3B model | Full prompt + strict schema | Full prompt + response schema |
+| Client | `app/ollama.py` (native API over httpx) | Anthropic SDK | `app/gemini.py` (REST over httpx, key in a header) |
 
 ```
-LLM_PROVIDER=ollama
+LLM_PROVIDER=ollama                          # ollama | claude | gemini
+LLM_FALLBACK=                                # second reader: claude | gemini | ollama, or empty
 OLLAMA_BASE_URL=http://192.168.0.183:11434   # the Ollama PC; keep it off the internet, it has no login
 OLLAMA_MODEL=qwen2.5:3b
 # OLLAMA_NUM_CTX=8192  OLLAMA_TIMEOUT=180  OLLAMA_KEEP_ALIVE=30m
-# LLM_FALLBACK=1   -> photos / scanned PDFs (and everything while Ollama is unreachable) go to Claude, if a key is saved
+# GEMINI_API_KEY=AIza...  GEMINI_MODEL=gemini-2.5-flash    (or paste the key in Admin, stored encrypted)
 ```
+
+Adding a fourth provider is a transport module like `app/gemini.py`, an entry in
+`extract.EXTRACTORS`, a branch in `ask._answer`, and the name in `config.PROVIDERS` (see `app/llm.py`).
 
 Every Ollama request uses temperature 0, a JSON schema in `format`, `num_ctx` ≥ 8192 (long documents
 are cut to fit, keeping the start and the end), `keep_alive` 30m and a 180 s timeout. A malformed
@@ -93,7 +99,7 @@ docker compose up -d --build
 ## Development
 
 ```
-.venv\Scripts\python -m pytest tests        # 69 tests, no network (fake Claude, fake Ollama, fake Drive, fake Microsoft Graph)
+.venv\Scripts\python -m pytest tests        # 82 tests, no network (fake Claude, fake Ollama, fake Gemini, fake Drive, fake Graph)
 .venv\Scripts\python -m pip_audit           # dependency vulnerabilities
 .venv\Scripts\python -m bandit -r app -ll   # static analysis
 ```
@@ -110,6 +116,7 @@ app/
   sync.py        sync pipeline, watcher/scheduler thread, uploads processing
   extract.py     document reading: Claude structured extraction, the small-model (Ollama) prompt + schema, bookkeeping rules
   ollama.py      Ollama client (native /api/chat with JSON schema, num_ctx, keep_alive; health check)
+  gemini.py      Gemini client (REST generateContent with a response schema; key test; schema converter)
   textract.py    plain-text extraction (PDF text layer, Excel, Word) for text-only models
   llm.py         provider façade (ready? health?) + llm_check.py command line; errors.py shared ApiUnavailable
   analytics.py   dashboard aggregates and company directory

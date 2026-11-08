@@ -13,7 +13,7 @@ from typing import Any
 
 import anthropic
 
-from . import config, extract, ollama, settings
+from . import config, extract, gemini, ollama, settings
 from .errors import ApiUnavailable
 
 log = logging.getLogger(__name__)
@@ -31,19 +31,20 @@ def _doc_line(d: dict[str, Any]) -> str:
 
 
 def answer(question: str, summary: dict[str, Any], docs: list[dict[str, Any]]) -> str:
-    """Answer with the configured provider; Ollama gets as many recent rows as fit its context."""
-    if settings.llm_provider() == "ollama":
-        try:
-            return _answer(question, summary, docs, ollama_mode=True)
-        except ApiUnavailable as exc:
-            if settings.llm_fallback() and settings.has_api_key():
-                log.warning("ask: %s — using Claude (LLM_FALLBACK)", exc)
-                return _answer(question, summary, docs, ollama_mode=False)
-            raise
-    return _answer(question, summary, docs, ollama_mode=False)
+    """Answer with the chosen reader, falling back to the second one when the first is unavailable."""
+    primary = settings.llm_provider()
+    fb = extract.fallback_for(primary)
+    try:
+        return _answer(question, summary, docs, provider=primary)
+    except ApiUnavailable as exc:
+        if fb:
+            log.warning("ask: %s — using %s (fallback reader)", exc, fb)
+            return _answer(question, summary, docs, provider=fb)
+        raise
 
 
-def _answer(question: str, summary: dict[str, Any], docs: list[dict[str, Any]], *, ollama_mode: bool) -> str:
+def _answer(question: str, summary: dict[str, Any], docs: list[dict[str, Any]], *, provider: str) -> str:
+    ollama_mode = provider == "ollama"  # the local model gets as many recent rows as fit its context
     company = settings.get("company_name")
     docs = sorted(docs, key=lambda d: d.get("issue_date") or "", reverse=True)
     lines = [_doc_line(d) for d in docs[:800]]
@@ -78,6 +79,12 @@ def _answer(question: str, summary: dict[str, Any], docs: list[dict[str, Any]], 
     )
     if ollama_mode:
         text = ollama.chat([{"role": "system", "content": system}, {"role": "user", "content": user}], num_predict=800)
+        return text.strip() or "The model returned no answer."
+    if provider == "gemini":
+        key = settings.get("gemini_api_key").strip()
+        if not settings.looks_like_key(key):
+            raise ApiUnavailable("No Gemini API key saved. Add one under Admin → Document reader.")
+        text = gemini.generate(key, settings.provider_model("gemini"), system, [{"text": user}], max_tokens=2000)
         return text.strip() or "The model returned no answer."
     model = settings.get("ask_model") or settings.get("extract_model") or "claude-opus-5-5"
     common = dict(model=model, max_tokens=4000, system=system, messages=[{"role": "user", "content": user}],

@@ -628,7 +628,7 @@
   /** Header badge + a toast whenever the reader's state changes (e.g. the Ollama PC goes to sleep or comes back). */
   function renderAi(l) {
     if (!l || !l.state) return;
-    const cls = AI_CLASS[l.state] || "", who = l.provider === "ollama" ? "Ollama" : l.provider === "claude" ? "Claude" : "AI";
+    const cls = AI_CLASS[l.state] || "", who = { ollama: "Ollama", claude: "Claude", gemini: "Gemini" }[l.provider] || "AI";
     const b = $("#aiBadge");
     b.className = `ai-badge ${cls}`;
     b.textContent = `AI: ${who} · ${AI_SHORT[l.state] || l.state}`;
@@ -774,13 +774,14 @@
     renderAi(st.llm);
     const l = st.llm || {}, lcls = AI_CLASS[l.state] || "", readBy = Object.entries(st.read_by || {});
     const reader = l.provider === "ollama" ? `Ollama · model <b>${esc(l.model)}</b> at <b>${esc(l.url)}</b> (your own server — documents never leave the network)`
-      : l.provider === "claude" ? `Claude API · model <b>${esc(l.model || state.config.model)}</b>` : "checking…";
+      : l.provider === "claude" ? `Claude API · model <b>${esc(l.model || state.config.model)}</b>`
+      : l.provider === "gemini" ? `Gemini API · model <b>${esc(l.model)}</b>` : "checking…";
     $("#syncPanel").innerHTML = `
       <div class="card" style="margin:0 0 14px;padding:12px 14px">
         <div class="sync-status">Document reader: ${reader}</div>
         <div class="sync-status" style="margin-top:4px"><span class="ai-badge ${lcls}">${esc(l.label || "Checking…")}</span>
           <span class="muted small" style="margin-left:8px">${esc(l.message || "")}${l.checked_at ? ` · checked ${aiTime(l.checked_at)}` : ""}${l.fallback ? " · Claude fallback on" : ""}</span></div>
-        <div class="small" style="margin-top:8px">Figures in this ledger were read by: ${readBy.length ? readBy.map(([m, n]) => `<span class="chip ${m.startsWith("ollama/") ? "in" : "pipe"}">${esc(m.startsWith("ollama/") ? "Ollama " + m.slice(7) : m)}: ${n} document${n === 1 ? "" : "s"}</span>`).join(" ") : "nothing read yet"}</div>
+        <div class="small" style="margin-top:8px">Figures in this ledger were read by: ${readBy.length ? readBy.map(([m, n]) => `<span class="chip ${m.startsWith("ollama/") ? "in" : "pipe"}">${esc(m.startsWith("ollama/") ? "Ollama " + m.slice(7) : m.startsWith("gemini/") ? "Gemini " + m.slice(7) : m)}: ${n} document${n === 1 ? "" : "s"}</span>`).join(" ") : "nothing read yet"}</div>
       </div>
       <div class="sync-status"><b>${esc(st.message || (st.running ? "Working…" : "Idle"))}</b>${st.current_source ? ` — ${esc(st.current_source)}` : ""}${st.current_file ? ` · ${esc(st.current_file)}` : ""}</div>
       <div class="progress"><i style="width:${pct}%"></i></div>
@@ -812,7 +813,7 @@
         <span class="muted small">${s.done_count} read${s.error_count ? ` · <span class="neg">${s.error_count} errors</span>` : ""} · last sync ${when(s.last_sync_at)}</span>
         <span class="status ${s.last_status === "ok" || s.last_status === "connected" || s.last_status === "ready" ? "paid" : s.last_status === "failed" ? "overdue" : "unknown"}">${label(s.enabled ? s.last_status : "disabled")}</span>
       </div>`).join("")}</div>` : `<div class="empty">No sources connected yet</div>`) +
-      `<p class="muted small" style="margin:12px 0 0">${c.llm_provider === "ollama" ? `Reader: <b>Ollama</b> · model <b>${esc(c.llm_model)}</b>${c.llm_fallback ? " · Claude fallback on" : ""}` : `Claude key: <b class="${c.has_api_key ? "pos" : "neg"}">${c.has_api_key ? "saved" : "missing"}</b> · model <b>${esc(c.model)}</b>`} · currency <b>${esc(c.currency)}</b>${c.auto_sync_minutes ? ` · auto-sync every ${c.auto_sync_minutes} min` : ""}</p>`;
+      `<p class="muted small" style="margin:12px 0 0">Reader: <b>${esc({ ollama: "Ollama", claude: "Claude", gemini: "Gemini" }[c.llm_provider] || c.llm_provider)}</b> · model <b>${esc(c.llm_model)}</b>${c.llm_fallback ? ` · fallback ${esc({ ollama: "Ollama", claude: "Claude", gemini: "Gemini" }[c.llm_fallback] || c.llm_fallback)}` : ""} · <span class="${c.llm_ready ? "pos" : "neg"}">${c.llm_ready ? "ready" : "key missing"}</span> · currency <b>${esc(c.currency)}</b>${c.auto_sync_minutes ? ` · auto-sync every ${c.auto_sync_minutes} min` : ""}</p>`;
     const tr = state.meta.treatments;
     $("#rulesPanel").innerHTML = `<table><thead><tr><th>Counted as</th><th>Meaning</th><th>Which documents</th></tr></thead><tbody>
       <tr><td>${treatmentChip("revenue")}</td><td>${esc(tr.revenue)}</td><td>Sales invoices the company issued (credit notes issued are subtracted)</td></tr>

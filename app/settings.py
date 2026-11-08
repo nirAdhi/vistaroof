@@ -49,12 +49,13 @@ from typing import Any
 
 from . import config, crypto, db
 
-SECRET_KEYS = {"anthropic_api_key", "google_client_config", "ms_client_config", "admin_password_hash", "session_secret"}
+SECRET_KEYS = {"anthropic_api_key", "gemini_api_key", "google_client_config", "ms_client_config", "admin_password_hash", "session_secret"}
 PUBLIC_KEYS = [
     "company_name", "company_address", "company_vat", "base_currency", "country", "extract_model", "extract_effort",
-    "ask_model", "concurrency", "max_file_mb", "auto_sync_minutes", "cache_previews",
+    "ask_model", "concurrency", "max_file_mb", "auto_sync_minutes", "cache_previews", "gemini_model",
 ]
-ENCRYPTED_KEYS = {"anthropic_api_key", "google_client_config", "ms_client_config"}  # password hashes and the HMAC secret are not secrets of value
+ENCRYPTED_KEYS = {"anthropic_api_key", "gemini_api_key", "google_client_config", "ms_client_config"}  # password hashes and the HMAC secret are not secrets of value
+API_KEY_SETTINGS = ("anthropic_api_key", "gemini_api_key")
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14  # 14 days
 MIN_PASSWORD_LENGTH = 10
 
@@ -90,8 +91,8 @@ def get(key: str, default: Any = None) -> str:
         value = vals[key]
         return crypto.decrypt(value) if key in ENCRYPTED_KEYS else value
     env = config.ENV_DEFAULTS.get(key)
-    if key == "anthropic_api_key" and not looks_like_key(env or ""):
-        env = ""  # ignore the ``sk-ant-...`` placeholder from .env.example
+    if key in API_KEY_SETTINGS and not looks_like_key(env or ""):
+        env = ""  # ignore the ``sk-ant-...`` / ``AIza...`` placeholders from .env.example
     return env if env is not None else (default if default is not None else "")
 
 
@@ -145,34 +146,55 @@ def has_api_key() -> bool:
     return looks_like_key(get("anthropic_api_key"))
 
 
+def has_gemini_key() -> bool:
+    return looks_like_key(get("gemini_api_key"))
+
+
 def llm_provider() -> str:
-    """``ollama`` or ``claude``: the value saved in Admin, else LLM_PROVIDER from .env."""
+    """``ollama``, ``claude`` or ``gemini``: the value saved in Admin, else LLM_PROVIDER from .env."""
     v = (get("llm_provider") or "").strip().lower()
-    return v if v in ("ollama", "claude") else config.LLM_PROVIDER
+    return v if v in config.PROVIDERS else config.LLM_PROVIDER
+
+
+def llm_fallback_provider() -> str:
+    """The second reader used when the first is unreachable / unfunded / cannot read a file, or ""."""
+    v = (get("llm_fallback") or "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return "claude"  # the original boolean form
+    return v if v in config.PROVIDERS else ""
 
 
 def llm_fallback() -> bool:
-    """Should an Ollama setup hand files to Claude when it cannot read them / is unreachable? (Needs a key too.)"""
-    return get_bool("llm_fallback", config.LLM_FALLBACK)
+    return bool(llm_fallback_provider())
+
+
+def provider_ready(p: str) -> bool:
+    """Ollama needs no key; Claude and Gemini need their key saved."""
+    return p == "ollama" or (p == "claude" and has_api_key()) or (p == "gemini" and has_gemini_key())
+
+
+def provider_model(p: str) -> str:
+    return {"ollama": config.OLLAMA_MODEL, "claude": get("extract_model"), "gemini": get("gemini_model") or config.GEMINI_MODEL}.get(p, "")
 
 
 def llm_ready() -> bool:
-    """Can documents be read at all? Ollama needs no key; Claude needs a saved key."""
-    return llm_provider() == "ollama" or has_api_key()
+    """Can documents be read at all with the chosen reader?"""
+    return provider_ready(llm_provider())
 
 
 def llm_public() -> dict[str, Any]:
     """Provider summary for the UI (no secrets)."""
-    if llm_provider() == "ollama":
-        return {"llm_provider": "ollama", "llm_model": config.OLLAMA_MODEL, "llm_url": config.OLLAMA_BASE_URL,
-                "llm_fallback": llm_fallback(), "llm_fallback_usable": llm_fallback() and has_api_key(), "llm_ready": True}
-    return {"llm_provider": "claude", "llm_model": get("extract_model"), "llm_url": "", "llm_fallback": llm_fallback(),
-            "llm_fallback_usable": False, "llm_ready": has_api_key()}
+    p, fb = llm_provider(), llm_fallback_provider()
+    return {
+        "llm_provider": p, "llm_model": provider_model(p), "llm_url": config.OLLAMA_BASE_URL if p == "ollama" else "",
+        "llm_fallback": fb, "llm_fallback_usable": bool(fb) and fb != p and provider_ready(fb), "llm_ready": provider_ready(p),
+        "providers": [{"id": x, "label": config.PROVIDER_LABELS[x], "ready": provider_ready(x), "model": provider_model(x)} for x in config.PROVIDERS],
+    }
 
 
-def masked_key() -> str:
+def masked_key(name: str = "anthropic_api_key") -> str:
     """``sk-ant-a…1234`` style display so the admin can recognise the key without exposing it."""
-    k = get("anthropic_api_key").strip()
+    k = get(name).strip()
     if not k:
         return ""
     return k[:7] + "…" + k[-4:] if len(k) > 14 else "•" * len(k)
@@ -195,6 +217,8 @@ def public() -> dict[str, Any]:
     out = {k: get(k) for k in PUBLIC_KEYS}
     out["anthropic_api_key_masked"] = masked_key()
     out["has_api_key"] = has_api_key()
+    out["gemini_api_key_masked"] = masked_key("gemini_api_key")
+    out["has_gemini_key"] = has_gemini_key()
     out.update(llm_public())
     cfg = google_client_config()
     out["has_google_client"] = cfg is not None

@@ -24,6 +24,26 @@ def test_everything_requires_login(client, fresh_db):
     assert h["ok"] is True and "version" in h
 
 
+def test_every_api_route_needs_a_session(client, fresh_db):
+    """Walk the router: anything under /api must answer 401/403 without a cookie, except the login endpoints."""
+    import re
+
+    from app import main
+
+    client.cookies.clear()
+    open_paths = {"/api/auth/me", "/api/auth/login", "/api/auth/logout", "/api/admin/me", "/api/admin/login", "/api/admin/setup", "/api/admin/logout"}
+    checked = 0
+    for route in main.app.routes:
+        path, methods = getattr(route, "path", ""), getattr(route, "methods", None)
+        if not path.startswith("/api/") or path in open_paths or not methods:
+            continue
+        for m in methods - {"HEAD", "OPTIONS"}:
+            r = client.request(m, re.sub(r"\{[^}]+\}", "1", path), json={})
+            assert r.status_code in (401, 403), f"{m} {path} answered {r.status_code} without a session"
+            checked += 1
+    assert checked > 40
+
+
 def test_admin_setup_login_and_password_rules(client, fresh_db):
     settings.set_many({"admin_password_hash": ""})
     client.cookies.clear()
@@ -137,6 +157,10 @@ def test_secrets_encrypted_at_rest(admin, fresh_db, monkeypatch):
         assert raw.startswith("enc:") and "zzzz" not in raw
         assert settings.get("anthropic_api_key") == "sk-ant-api03-" + "z" * 40
         assert admin.get("/api/admin/overview").json()["settings"]["secrets_encrypted"] is True
+        admin.put("/api/admin/settings", json={"gemini_api_key": "AIzaSy" + "g" * 33})
+        with db.connect() as conn:
+            raw = conn.execute("SELECT value FROM settings WHERE key='gemini_api_key'").fetchone()["value"]
+        assert raw.startswith("enc:") and "gggg" not in raw
         # Google tokens too
         sid = db.create_source("drive", "D")
         sources.save_token(sid, '{"token":"abc","scopes":[]}')
@@ -154,7 +178,7 @@ def test_secrets_encrypted_at_rest(admin, fresh_db, monkeypatch):
     finally:
         monkeypatch.delenv("APP_SECRET_KEY", raising=False)
         crypto._reset_for_tests()
-        settings.set_many({"anthropic_api_key": ""})
+        settings.set_many({"anthropic_api_key": "", "gemini_api_key": ""})
 
 
 def test_backup_download(admin, fresh_db):

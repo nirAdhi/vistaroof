@@ -100,7 +100,7 @@ def test_pdf_excel_and_word_are_turned_into_text_before_the_model(monkeypatch, f
 def test_photos_and_scanned_pdfs_are_skipped_without_fallback(monkeypatch, fresh_db):
     fake = FakeOllama()
     install_fake_ollama(monkeypatch, fake)
-    with pytest.raises(ValueError, match="photo / image file.*LLM_FALLBACK"):
+    with pytest.raises(ValueError, match="photo / image file.*fallback reader"):
         extract.extract(_meta("till.jpg", "image/jpeg"), FileContent(mime="image/jpeg", data=jpeg_bytes()))
     with pytest.raises(ValueError, match="scanned PDF without a text layer"):
         extract.extract(_meta("scan.pdf", "application/pdf"), FileContent(mime="application/pdf", data=pdf_with_text(" ")))
@@ -200,7 +200,7 @@ def test_sync_end_to_end_with_ollama_and_no_claude_key(admin, fresh_db, monkeypa
     assert docs["INV-2026-014.txt"]["status"] == "done"
     assert admin.get(f"/api/documents/{docs['INV-2026-014.txt']['id']}").json()["model"] == "ollama/qwen2.5:3b"
     assert docs["chadwicks.pdf"]["status"] == "done" and docs["chadwicks.pdf"]["doc_type"] == "receipt"
-    assert docs["photo.jpg"]["status"] == "skipped" and "photo" in docs["photo.jpg"]["error"] and "LLM_FALLBACK" in docs["photo.jpg"]["error"]
+    assert docs["photo.jpg"]["status"] == "skipped" and "photo" in docs["photo.jpg"]["error"] and "fallback reader" in docs["photo.jpg"]["error"]
     assert sync.status()["errors"] == 0
     # the Admin "Check Ollama" button
     fake.answers.append("OK")
@@ -230,13 +230,14 @@ def test_provider_can_be_switched_in_admin_and_status_follows(admin, fresh_db, m
     install_fake_ollama(monkeypatch, fake)
     assert admin.put("/api/admin/settings", json={"llm_provider": "gpt"}).status_code == 400
     r = admin.put("/api/admin/settings", json={"llm_provider": "claude", "llm_fallback": True}).json()
-    assert r["llm_provider"] == "claude" and r["llm_fallback"] is True and settings.llm_provider() == "claude"
+    assert r["llm_provider"] == "claude" and r["llm_fallback"] == "claude" and settings.llm_provider() == "claude"
     fields, model = extract.extract(_meta("INV-1.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
     assert model == "fake-model" and fake.requests == []  # Claude read it
     st = llm.refresh_status()
     assert st["state"] == "ready" and st["provider"] == "claude" and st["label"] == "Claude ready"
     r = admin.put("/api/admin/settings", json={"llm_provider": "ollama"}).json()
-    assert r["llm_provider"] == "ollama" and r["llm_fallback_usable"] is True  # fallback on + key saved
+    assert r["llm_provider"] == "ollama" and r["llm_fallback_usable"] is True  # fallback claude + key saved
+    assert [p["id"] for p in r["providers"]] == ["ollama", "claude", "gemini"] and r["providers"][2]["ready"] is False
     fields, model = extract.extract(_meta("INV-2.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
     assert model == "ollama/qwen2.5:3b" and len(fake.requests) == 1
 

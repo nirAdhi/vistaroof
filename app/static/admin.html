@@ -40,7 +40,7 @@
 <div class="admin-layout" id="adminLayout" style="display:none">
   <nav class="side" id="sideNav">
     <button data-sec="sources" class="active">Sources &amp; sync</button>
-    <button data-sec="claude">Claude API</button>
+    <button data-sec="claude">Document reader</button>
     <button data-sec="company">Company</button>
     <button data-sec="google">Google setup</button>
     <button data-sec="microsoft">Microsoft setup</button>
@@ -93,9 +93,10 @@
 
     <!-- ===== CLAUDE ===== -->
     <section class="sec" id="sec-claude">
-      <div class="sec-head"><h2>Claude API</h2><div class="muted">Which model reads the documents and answers questions: Ollama (your own AI server, private) or the Claude API. Choose it below; the Claude key is used when the reader is Claude, or as the fallback. The app checks the reader every minute and shows its state here, on the dashboard header and in a notification when it changes.</div></div>
+      <div class="sec-head"><h2>Document reader</h2><div class="muted">Which AI reads the documents and answers questions: Ollama (your own server, private), the Claude API (Anthropic) or the Gemini API (Google). Choose the reader and an optional second reader below; each cloud reader needs its own key. The app checks the reader every minute and shows its state here, on the dashboard header and in a notification when it changes.</div></div>
       <div class="card" id="llmCard"></div>
       <div class="card">
+        <h3>Claude API (Anthropic)</h3>
         <form id="claudeForm" class="form">
           <label>API key
             <div class="inline">
@@ -116,8 +117,25 @@
           </div>
           <div class="actions"><button class="btn primary" type="submit">Save</button><span class="muted small" id="claudeSaved"></span></div>
         </form>
+        <p class="muted small" style="margin:10px 0 0">Get a key at platform.claude.com → API keys. Keys are stored encrypted in the local database and never shown in full again.</p>
       </div>
-      <p class="muted small">Get a key at platform.claude.com → API keys. The key is stored in the local database on this computer and never shown in full again.</p>
+      <div class="card">
+        <h3>Gemini API (Google)</h3>
+        <form id="geminiForm" class="form">
+          <label>API key
+            <div class="inline">
+              <input name="gemini_api_key" type="password" placeholder="AIza…" autocomplete="off">
+              <button class="btn" type="button" id="showGeminiKeyBtn">Show</button>
+              <button class="btn" type="button" id="testGeminiKeyBtn">Test key</button>
+            </div>
+            <div class="small muted" id="geminiKeyStatus"></div>
+          </label>
+          <label>Model <input name="gemini_model" list="geminiModels" placeholder="gemini-2.5-flash" maxlength="80">
+            <datalist id="geminiModels"></datalist></label>
+          <div class="actions"><button class="btn primary" type="submit">Save</button><span class="muted small" id="geminiSaved"></span></div>
+        </form>
+        <p class="muted small" style="margin:10px 0 0">Get a key at aistudio.google.com → Get API key. Gemini reads photos and scanned PDFs like Claude. "Test key" lists the models the key can use.</p>
+      </div>
     </section>
 
     <!-- ===== COMPANY ===== -->

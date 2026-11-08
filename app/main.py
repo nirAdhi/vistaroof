@@ -50,7 +50,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import analytics, ask, config, db, demo, extract, llm, logsetup, microsoft, previews, settings, sources, sync
+from . import analytics, ask, config, db, demo, extract, gemini, llm, logsetup, microsoft, previews, settings, sources, sync
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -302,11 +302,14 @@ class PasswordChange(BaseModel):
     new: str = Field(max_length=200)
 
 
-@app.post("/api/auth/password")
+@app.post("/api/auth/password", dependencies=[Depends(require_login)])
 def auth_change_own_password(body: PasswordChange, request: Request, response: Response) -> dict[str, Any]:
-    """A signed-in user changes their own password; every other browser of theirs is logged out."""
+    """A signed-in user changes their own password; every other browser of theirs is logged out.
+
+    The login dependency runs before body validation, so an anonymous caller gets 401, never a 422
+    that describes the expected body."""
     ident = current_identity(request)
-    if ident is None:
+    if ident is None:  # pragma: no cover - require_login already answered 401
         raise HTTPException(401, "login required")
     if ident.is_builtin_admin:
         raise HTTPException(400, "the admin password is changed under Admin → Security")
@@ -705,6 +708,7 @@ def admin_overview() -> dict[str, Any]:
     pub["watch_interval_seconds"] = settings.get_int("watch_interval_seconds", 120)
     return {"settings": pub, "sources": srcs, "sync": sync.status(), "counts": db.status_counts(),
             "demo_loaded": demo.count() > 0, "models": [{"id": m, "label": l} for m, l in extract.MODELS],
+            "gemini_models": [{"id": m, "label": l} for m, l in gemini.SUGGESTED_MODELS],
             "production": config.IS_PRODUCTION, "users": db.list_users(), "previews": previews.stats()}
 
 
@@ -728,9 +732,11 @@ class SettingsPatch(BaseModel):
     auto_sync_minutes: int | None = Field(None, ge=0, le=10080)
     watch_interval_seconds: int | None = Field(None, ge=0, le=86400)
     anthropic_api_key: str | None = Field(None, max_length=300)
+    gemini_api_key: str | None = Field(None, max_length=300)
+    gemini_model: str | None = Field(None, max_length=80)
     cache_previews: bool | None = None  # keep viewable copies of files on the server (default off)
-    llm_provider: str | None = Field(None, max_length=10)  # ollama | claude (default from .env)
-    llm_fallback: bool | None = None  # Ollama → Claude for photos / scans / while Ollama is unreachable
+    llm_provider: str | None = Field(None, max_length=10)  # ollama | claude | gemini (default from .env)
+    llm_fallback: str | bool | None = None  # second reader: "" | claude | gemini | ollama (True = claude); validated below
 
 
 @app.put("/api/admin/settings", dependencies=[Depends(require_admin)])
@@ -745,12 +751,28 @@ def admin_update_settings(body: SettingsPatch) -> dict[str, Any]:
         if key and not settings.looks_like_key(key):
             raise HTTPException(400, "that does not look like a Claude API key")
         changes["anthropic_api_key"] = key
+    if "gemini_api_key" in changes:
+        key = (changes["gemini_api_key"] or "").strip()
+        if key and not settings.looks_like_key(key):
+            raise HTTPException(400, "that does not look like a Gemini API key")
+        changes["gemini_api_key"] = key
+    if "gemini_model" in changes:
+        m = (changes["gemini_model"] or "").strip()
+        if not _MODEL_NAME_RE.match(m):
+            raise HTTPException(400, "model name: letters, digits, dots, dashes only (e.g. gemini-2.5-flash)")
+        changes["gemini_model"] = m
     if "llm_provider" in changes:
         changes["llm_provider"] = (changes["llm_provider"] or "").strip().lower()
-        if changes["llm_provider"] not in ("ollama", "claude"):
-            raise HTTPException(400, "the document reader must be 'ollama' or 'claude'")
+        if changes["llm_provider"] not in config.PROVIDERS:
+            raise HTTPException(400, f"the document reader must be one of {', '.join(config.PROVIDERS)}")
     if "llm_fallback" in changes:
-        changes["llm_fallback"] = "1" if changes["llm_fallback"] else "0"
+        fb = changes["llm_fallback"]
+        fb = "claude" if fb is True else "" if fb in (False, None) else str(fb).strip().lower()[:20]
+        if fb in ("none", "off", "0"):
+            fb = ""
+        if fb and fb not in config.PROVIDERS:
+            raise HTTPException(400, f"the fallback reader must be empty or one of {', '.join(config.PROVIDERS)}")
+        changes["llm_fallback"] = fb
     if "extract_effort" in changes and changes["extract_effort"] not in ("low", "medium", "high"):
         raise HTTPException(400, "effort must be low, medium or high")
     if "extract_model" in changes and changes["extract_model"] not in {m for m, _ in extract.MODELS}:
@@ -762,7 +784,7 @@ def admin_update_settings(body: SettingsPatch) -> dict[str, Any]:
     if "watch_interval_seconds" in changes and 0 < changes["watch_interval_seconds"] < 30:
         changes["watch_interval_seconds"] = 30  # keep Drive API usage reasonable
     settings.set_many(changes)
-    if {"llm_provider", "llm_fallback", "anthropic_api_key"} & changes.keys():
+    if {"llm_provider", "llm_fallback", "anthropic_api_key", "gemini_api_key", "gemini_model"} & changes.keys():
         llm.refresh_in_background()  # the badge should reflect the new reader within seconds
     pub = settings.public()
     pub["watch_interval_seconds"] = settings.get_int("watch_interval_seconds", 120)
@@ -771,11 +793,25 @@ def admin_update_settings(body: SettingsPatch) -> dict[str, Any]:
 
 class KeyTest(BaseModel):
     key: str | None = Field(None, max_length=300)
-    model: str | None = Field(None, max_length=60)
+    model: str | None = Field(None, max_length=80)
+    provider: str | None = Field(None, max_length=10)  # claude (default) | gemini
+
+
+_MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{1,78}$")
 
 
 @app.post("/api/admin/test-key", dependencies=[Depends(require_admin)])
 def admin_test_key(body: KeyTest) -> dict[str, Any]:
+    """Test a pasted key (or the saved one) for Claude or Gemini without saving it."""
+    prov = (body.provider or "claude").strip().lower()
+    if prov == "gemini":
+        key = (body.key or "").strip() or settings.get("gemini_api_key").strip()
+        if not settings.looks_like_key(key):
+            return {"ok": False, "message": "No key to test."}
+        model = (body.model or "").strip() or settings.provider_model("gemini")
+        if not _MODEL_NAME_RE.match(model):
+            return {"ok": False, "message": "model name: letters, digits, dots, dashes only"}
+        return gemini.test_api_key(key, model)
     key = (body.key or "").strip() or settings.get("anthropic_api_key").strip()
     if not settings.looks_like_key(key):
         return {"ok": False, "message": "No key to test."}

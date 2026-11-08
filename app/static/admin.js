@@ -203,40 +203,53 @@
     sel.innerHTML = models.map((m) => `<option value="${m.id}">${esc(m.label)}</option>`).join("");
     ask.innerHTML = `<option value="">Same as reading model</option>` + models.map((m) => `<option value="${m.id}">${esc(m.label)}</option>`).join("");
     fillForm($("#claudeForm"), s);
-    $('#claudeForm [name="anthropic_api_key"]').placeholder = s.has_api_key ? `Saved: ${s.anthropic_api_key_masked} — paste a new key to replace` : "sk-ant-…";
+    fillForm($("#geminiForm"), s);
+    $("#geminiModels").innerHTML = (state.overview.gemini_models || []).map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join("");
     const ollama = s.llm_provider === "ollama";
-    $("#keyStatus").innerHTML = s.has_api_key ? `<span class="ok">Key saved (${esc(s.anthropic_api_key_masked)})${ollama ? " — used only as the fallback" : ""}</span>`
-      : ollama ? `<span class="muted">No key saved — not needed while the provider is Ollama (only for LLM_PROVIDER=claude or LLM_FALLBACK=1)</span>`
-      : `<span class="missing">No key saved — syncing and Ask are disabled</span>`;
+    const keyLine = (saved, masked, prov, label) => {
+      const inUse = s.llm_provider === prov, isFallback = s.llm_fallback === prov;
+      if (saved) return `<span class="ok">Key saved (${esc(masked)})${inUse ? "" : isFallback ? " — used as the fallback reader" : " — not in use until chosen above"}</span>`;
+      return inUse || isFallback ? `<span class="missing">No key saved — ${label} is ${inUse ? "the reader" : "the fallback"} but cannot work without it</span>`
+        : `<span class="muted">No key saved — only needed if ${label} is chosen as the reader or the fallback</span>`;
+    };
+    $('#claudeForm [name="anthropic_api_key"]').placeholder = s.has_api_key ? `Saved: ${s.anthropic_api_key_masked} — paste a new key to replace` : "sk-ant-…";
+    $("#keyStatus").innerHTML = keyLine(s.has_api_key, s.anthropic_api_key_masked, "claude", "Claude");
+    $('#geminiForm [name="gemini_api_key"]').placeholder = s.has_gemini_key ? `Saved: ${s.gemini_api_key_masked} — paste a new key to replace` : "AIza…";
+    $("#geminiKeyStatus").innerHTML = keyLine(s.has_gemini_key, s.gemini_api_key_masked, "gemini", "Gemini");
     const l = (state.overview && state.overview.sync && state.overview.sync.llm) || {};
     const lcls = { connected: "good", ready: "good", model_missing: "warning", unreachable: "critical", no_key: "critical", key_invalid: "critical" }[l.state] || "muted";
     const readBy = Object.entries((state.overview && state.overview.sync && state.overview.sync.read_by) || {});
     const statusLine = (r) => `<span class="badge ${{ connected: "good", ready: "good", model_missing: "warning", unreachable: "critical", no_key: "critical", key_invalid: "critical" }[r.state] || "muted"}">${esc(r.label || "Checking…")}</span>
       <span class="${r.ok ? "ok" : r.ok === false ? "missing" : "muted"}">${esc(r.message || "")}</span>${r.checked_at ? ` <span class="muted">· checked ${when(r.checked_at)}</span>` : ""}
       ${r.models ? `<br><span class="muted">Installed models on the Ollama PC: ${esc(r.models.join(", ") || "none")}</span>` : ""}${r.probe ? ` <span class="muted">· probe answered “${esc(r.probe)}”</span>` : ""}`;
+    const NAMES = { ollama: "Ollama", claude: "Claude", gemini: "Gemini" };
+    const DESC = { ollama: "Ollama — the internal AI on your network (private, no API cost; text documents only)",
+      claude: "Claude API — Anthropic (also reads photos and scanned PDFs; uses API credit)",
+      gemini: "Gemini API — Google (also reads photos and scanned PDFs; uses API quota)" };
+    const provs = s.providers || [];
+    const who = ollama ? `Ollama, your own AI server: model <code>${esc(s.llm_model)}</code> at <code>${esc(s.llm_url)}</code>` : `${NAMES[s.llm_provider] || s.llm_provider} API: model <code>${esc(s.llm_model)}</code>`;
     $("#llmCard").innerHTML = `
-      <div class="strip-row"><div><b>Document reader</b> — ${ollama ? `Ollama, your own AI server: model <code>${esc(s.llm_model)}</code> at <code>${esc(s.llm_url)}</code>` : `Claude API (Anthropic): model <code>${esc(s.llm_model)}</code>`}</div>
+      <div class="strip-row"><div><b>Document reader</b> — ${who}${s.llm_fallback ? ` · fallback <b>${esc(NAMES[s.llm_fallback] || s.llm_fallback)}</b>${s.llm_fallback_usable ? "" : ' <span class="missing">(no key saved for it)</span>'}` : ""}</div>
         <div><button class="btn sm" id="llmCheckBtn">Check now</button></div></div>
       <div class="small" id="llmStatus" style="margin:6px 0 10px">${statusLine(l)}</div>
-      <div class="small" style="margin:0 0 12px">Figures in the ledger were read by: ${readBy.length ? readBy.map(([m, n]) => `<span class="chip">${esc(m.startsWith("ollama/") ? "Ollama " + m.slice(7) : m)}: ${n}</span>`).join(" ") : "nothing read yet"}</div>
+      <div class="small" style="margin:0 0 12px">Figures in the ledger were read by: ${readBy.length ? readBy.map(([m, n]) => `<span class="chip">${esc(m.startsWith("ollama/") ? "Ollama " + m.slice(7) : m.startsWith("gemini/") ? "Gemini " + m.slice(7) : m)}: ${n}</span>`).join(" ") : "nothing read yet"}</div>
       <form id="llmForm" class="form">
         <div class="grid two">
           <label>Read documents with
-            <select name="llm_provider">
-              <option value="ollama">Ollama — the internal AI on your network (private, no API cost; text documents only)</option>
-              <option value="claude">Claude API — Anthropic (also reads photos and scanned PDFs; uses API credit)</option>
-            </select></label>
-          <label class="check"><input type="checkbox" name="llm_fallback"> Use Claude as the fallback: when Ollama is unreachable, or a file is a photo / scanned PDF (needs the Claude key below)</label>
+            <select name="llm_provider">${provs.map((p) => `<option value="${p.id}">${esc(DESC[p.id] || p.label)}${p.ready ? "" : " — key missing"}</option>`).join("")}</select></label>
+          <label>Second reader (fallback) when the first is unreachable, out of credit, or given a photo / scanned PDF it cannot read
+            <select name="llm_fallback"><option value="">None</option>${provs.map((p) => `<option value="${p.id}">${esc(p.label)}${p.ready ? "" : " — key missing"}</option>`).join("")}</select></label>
         </div>
         <div class="actions"><button class="btn primary" type="submit">Save reader</button><span class="muted small" id="llmSaved"></span>
           <span class="muted small">Default comes from <code>LLM_PROVIDER</code> / <code>LLM_FALLBACK</code> in .env; the choice saved here wins.</span></div>
       </form>`;
     $('#llmForm [name="llm_provider"]').value = s.llm_provider;
-    $('#llmForm [name="llm_fallback"]').checked = !!s.llm_fallback;
+    $('#llmForm [name="llm_fallback"]').value = s.llm_fallback || "";
     $("#llmForm").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const body = { llm_provider: $('#llmForm [name="llm_provider"]').value, llm_fallback: $('#llmForm [name="llm_fallback"]').checked };
-      try { await api("/api/admin/settings", { method: "PUT", body: JSON.stringify(body) }); toast(`Documents are now read with ${body.llm_provider === "ollama" ? "Ollama" : "Claude"}`); setTimeout(load, 1500); }
+      const body = { llm_provider: $('#llmForm [name="llm_provider"]').value, llm_fallback: $('#llmForm [name="llm_fallback"]').value };
+      if (body.llm_fallback === body.llm_provider) body.llm_fallback = "";
+      try { await api("/api/admin/settings", { method: "PUT", body: JSON.stringify(body) }); toast(`Documents are now read with ${NAMES[body.llm_provider] || body.llm_provider}${body.llm_fallback ? `, falling back to ${NAMES[body.llm_fallback]}` : ""}`); setTimeout(load, 1500); }
       catch (err) { toast(err.message, 6000); }
     });
     $("#llmCheckBtn").addEventListener("click", async () => {
@@ -250,6 +263,23 @@
     });
   }
   $("#showKeyBtn").addEventListener("click", () => { const i = $('#claudeForm [name="anthropic_api_key"]'); i.type = i.type === "password" ? "text" : "password"; $("#showKeyBtn").textContent = i.type === "password" ? "Show" : "Hide"; });
+  $("#showGeminiKeyBtn").addEventListener("click", () => { const i = $('#geminiForm [name="gemini_api_key"]'); i.type = i.type === "password" ? "text" : "password"; $("#showGeminiKeyBtn").textContent = i.type === "password" ? "Show" : "Hide"; });
+  $("#testGeminiKeyBtn").addEventListener("click", async () => {
+    const btn = $("#testGeminiKeyBtn"); btn.disabled = true; btn.textContent = "Testing…";
+    try {
+      const r = await api("/api/admin/test-key", { method: "POST", body: JSON.stringify({ provider: "gemini", key: $('#geminiForm [name="gemini_api_key"]').value, model: $('#geminiForm [name="gemini_model"]').value }) });
+      $("#geminiKeyStatus").innerHTML = `<span class="${r.ok ? "ok" : "missing"}">${esc(r.message)}</span>${r.models ? `<br><span class="muted">Models this key can use: ${esc(r.models.join(", "))}</span>` : ""}`;
+    } catch (err) { $("#geminiKeyStatus").innerHTML = `<span class="missing">${esc(err.message)}</span>`; }
+    btn.disabled = false; btn.textContent = "Test key";
+  });
+  $("#geminiForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = { gemini_model: $('#geminiForm [name="gemini_model"]').value.trim() || "gemini-2.5-flash" };
+    const key = $('#geminiForm [name="gemini_api_key"]').value.trim();
+    if (key) body.gemini_api_key = key;
+    try { await api("/api/admin/settings", { method: "PUT", body: JSON.stringify(body) }); $('#geminiForm [name="gemini_api_key"]').value = ""; $("#geminiSaved").textContent = "Saved"; await load(); setTimeout(() => ($("#geminiSaved").textContent = ""), 2500); }
+    catch (err) { toast(err.message, 6000); }
+  });
   $("#testKeyBtn").addEventListener("click", async () => {
     const btn = $("#testKeyBtn"); btn.disabled = true; btn.textContent = "Testing…";
     try {
