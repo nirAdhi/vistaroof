@@ -221,6 +221,11 @@
         <p class="muted small">Off (recommended): a preview is fetched from the source every time it is opened and nothing is written to disk. On: the viewable copy is kept under <code>data/previews</code>.</p>
         <div class="actions"><button class="btn" id="clearPreviews">Delete stored copies</button></div>
       </div>
+      <div class="card" style="margin-bottom:14px">
+        <h3>Dates</h3>
+        <p class="muted small">A document without a date is placed in the dashboard by its file date, which can put an old invoice in the current period. If the reader wrote the date in another notation (14/02/2026, 14 Feb 2026), this recovers it from the stored answer without reading the file again. It also runs by itself at every start.</p>
+        <div class="actions"><button class="btn" id="repairDates">Repair missing dates</button><span class="muted small" id="repairDatesResult"></span></div>
+      </div>
       <div class="grid two">
         <div class="card">
           <h3>Demo data</h3>

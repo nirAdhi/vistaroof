@@ -50,7 +50,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import analytics, ask, config, db, demo, extract, gemini, llm, logsetup, microsoft, previews, settings, sources, sync
+from . import analytics, ask, config, db, demo, extract, gemini, llm, logsetup, microsoft, previews, repair, settings, sources, sync
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -74,6 +74,7 @@ async def _lifespan(_app: FastAPI):
         log.info("PUBLIC_BASE_URL not set: running in local mode (cookies not marked Secure).")
     sync.start_scheduler()
     llm.refresh_in_background()  # populate the "document reader" status without delaying start-up
+    repair.run_in_background()  # dates a stricter parser once rejected are recovered from the stored answers
     yield
 
 
@@ -201,7 +202,8 @@ def require_admin(request: Request) -> str:
 def _require_api_key() -> None:
     """Documents can only be read when a model backend is usable (Ollama configured, or a Claude key saved)."""
     if not settings.llm_ready():
-        raise HTTPException(400, "No Claude API key configured. Add one in Admin → Claude, or set LLM_PROVIDER=ollama.")
+        name = config.PROVIDER_LABELS[settings.llm_provider()]
+        raise HTTPException(400, f"The document reader ({name}) has no API key. Add one under Admin → Document reader, or choose Ollama there.")
 
 
 def _base_url(request: Request) -> str:
@@ -716,6 +718,12 @@ def admin_overview() -> dict[str, Any]:
 def admin_clear_previews() -> dict[str, Any]:
     """Delete every stored copy of a document file (they are re-fetched from the source when viewed)."""
     return {"ok": True, "removed": previews.clear(), "previews": previews.stats()}
+
+
+@app.post("/api/admin/repair-dates", dependencies=[Depends(require_admin)])
+def admin_repair_dates() -> dict[str, Any]:
+    """Fill missing issue / due dates from the stored model answers (no model call, nothing re-read)."""
+    return {"ok": True, **repair.repair_dates()}
 
 
 class SettingsPatch(BaseModel):

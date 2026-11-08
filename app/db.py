@@ -509,6 +509,22 @@ def reset_document(doc_id: int) -> None:
         conn.execute("UPDATE documents SET status='pending', overridden=0, processed_modified_at=NULL WHERE id=?", (doc_id,))
 
 
+def undated_documents_with_raw() -> list[dict[str, Any]]:
+    """Read documents missing a date whose stored model answer might still hold one (see app/repair.py)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, issue_date, due_date, raw FROM documents WHERE status='done' AND overridden=0 AND source!='demo' "
+            "AND raw IS NOT NULL AND (issue_date IS NULL OR due_date IS NULL)"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_dates(doc_id: int, issue_date: str | None, due_date: str | None) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE documents SET issue_date=?, due_date=? WHERE id=?", (issue_date, due_date, doc_id))
+    _touch()
+
+
 _SOURCE_NAME_SQL = "COALESCE(s.name, CASE WHEN d.source='demo' THEN 'Demo data' END) AS source_name"
 _DOC_LIST_COLUMNS = ", ".join(
     "d." + c for c in (
@@ -531,10 +547,12 @@ def get_document(doc_id: int) -> dict[str, Any] | None:
 def list_documents(filters: dict[str, Any]) -> list[dict[str, Any]]:
     """Filtered document list for the dashboard. ``removed`` rows are hidden unless asked for explicitly."""
     where, vals = ["1=1"], []
+    # Same rule as analytics._eff_date: an undated document is placed by its file date, so the list
+    # and the dashboard figures agree on what "in this period" means.
     if filters.get("date_from"):
-        where.append("(issue_date >= ? OR issue_date IS NULL)"); vals.append(filters["date_from"])
+        where.append("COALESCE(d.issue_date, substr(d.modified_at, 1, 10)) >= ?"); vals.append(filters["date_from"])
     if filters.get("date_to"):
-        where.append("(issue_date <= ? OR issue_date IS NULL)"); vals.append(filters["date_to"])
+        where.append("COALESCE(d.issue_date, substr(d.modified_at, 1, 10)) <= ?"); vals.append(filters["date_to"])
     for key in ("doc_type", "treatment", "status", "payment_status", "counterparty", "project"):  # fixed column names
         if filters.get(key):
             where.append(f"d.{key} = ?"); vals.append(filters[key])  # nosec B608 - value is a bound parameter

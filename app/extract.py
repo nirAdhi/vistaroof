@@ -34,6 +34,7 @@ import json
 import logging
 import re
 import threading
+from datetime import date
 from typing import Any
 
 import anthropic
@@ -328,6 +329,19 @@ def _call_model(blocks: list[dict[str, Any]]) -> tuple[dict[str, Any], str]:
 # ------------------------------------------------------------------ post-processing
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DMY_RE = re.compile(r"^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$")          # 14/02/2026, 14.2.26 (day first: Ireland / UK)
+_YMD_RE = re.compile(r"^(\d{4})[./-](\d{1,2})[./-](\d{1,2})")             # 2026/02/14, 2026-2-14, 2026-02-14T10:00
+_TEXT_RE = re.compile(r"^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})$")  # 14 Feb 2026, 14th February 2026
+_MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+
+
+def _iso(y: int, m: int, d: int) -> str | None:
+    if y < 100:
+        y += 2000
+    try:
+        return date(y, m, d).isoformat()
+    except ValueError:
+        return None
 
 
 def _num(v: Any) -> float | None:
@@ -340,8 +354,23 @@ def _num(v: Any) -> float | None:
 
 
 def _date(v: Any) -> str | None:
-    if isinstance(v, str) and _DATE_RE.match(v.strip()):
-        return v.strip()
+    """A date as a model may write it → YYYY-MM-DD, or None. Small models often ignore the format
+    instruction and copy the document's own notation (14/02/2026, 14 Feb 2026); without this the
+    document fell back to its file date and landed in the wrong month."""
+    if not isinstance(v, str):
+        return None
+    s = v.strip()
+    if _DATE_RE.match(s):
+        return s
+    m = _YMD_RE.match(s)
+    if m:
+        return _iso(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    m = _DMY_RE.match(s)
+    if m:
+        return _iso(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    m = _TEXT_RE.match(s)
+    if m and m.group(2)[:3].lower() in _MONTHS:
+        return _iso(int(m.group(3)), _MONTHS[m.group(2)[:3].lower()], int(m.group(1)))
     return None
 
 

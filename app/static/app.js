@@ -664,7 +664,7 @@
     state.docs = await api(`/api/documents?${p}`);
     $("#docCount").textContent = `${state.docs.length} documents`;
     $("#docTable").innerHTML = tableHtml([
-      { key: "issue_date", label: "Date", render: (r) => fmtDate(r.issue_date) },
+      { key: "issue_date", label: "Date", render: (r) => r.issue_date ? fmtDate(r.issue_date) : r.modified_at ? `<span class="muted" title="No date was read from the document; placed by the file's date">~${fmtDate(r.modified_at.slice(0, 10))}</span>` : "—" },
       { key: "name", label: "File", render: (r) => `<div>${esc(r.name)}</div><div class="muted small">${esc(r.folder || r.source_name || "")}</div>` },
       { key: "doc_type", label: "Type", render: (r) => r.status === "done" ? esc(label(r.doc_type)) : `<span class="chip">${esc(label(r.status))}</span>` },
       { key: "treatment", label: "Counted as", render: (r) => r.treatment ? treatmentChip(r.treatment) : "" },
@@ -798,7 +798,8 @@
       ${runs ? `<h3 style="font-size:13px;margin:14px 0 6px">Previous runs</h3><table><thead><tr><th>Started</th><th>Source</th><th class="num">Files</th><th class="num">Read</th><th class="num">Skipped</th><th class="num">Errors</th><th>Status</th></tr></thead><tbody>${runs}</tbody></table>` : ""}`;
     $("#syncNow").addEventListener("click", () => startSync(false));
     $("#syncForce").addEventListener("click", () => { if (confirm(state.config.llm_provider === "ollama" ? "Re-read every file with the local model? This takes a while." : "Re-read every file with Claude? This costs API usage for every document.")) startSync(true); });
-    $("#syncBtn").disabled = !!st.running;
+    $("#syncBtn").disabled = !!st.running || !state.config.llm_ready;
+    $("#syncBtn").title = state.config.llm_ready ? "Scan every connected source for new or changed documents" : "No document reader is ready — see Admin → Document reader";
     $("#syncBtn").textContent = st.running ? `Syncing ${pct}%` : "Sync now";
   }
 

@@ -355,6 +355,14 @@
   $("#clearPreviews").addEventListener("click", () => run(api("/api/admin/previews/clear", { method: "POST" }), "Stored copies deleted"));
   $("#demoLoad").addEventListener("click", () => run(api("/api/admin/demo/load", { method: "POST" }), "Demo data loaded"));
   $("#demoClear").addEventListener("click", () => run(api("/api/admin/demo/clear", { method: "POST" }), "Demo data removed"));
+  $("#repairDates").addEventListener("click", async () => {
+    const btn = $("#repairDates"); btn.disabled = true;
+    try {
+      const r = await api("/api/admin/repair-dates", { method: "POST" });
+      $("#repairDatesResult").textContent = r.checked ? `${r.updated} of ${r.checked} undated document${r.checked === 1 ? "" : "s"} now carry a date` : "Every document already has a date";
+    } catch (err) { toast(err.message, 6000); }
+    btn.disabled = false;
+  });
   $("#clearDocs").addEventListener("click", () => { if (confirm("Delete ALL extracted documents and sync history? This cannot be undone.")) run(api("/api/admin/clear-documents", { method: "POST" }), "All documents deleted"); });
   function renderSecurity(s, users) {
     const active = users.filter((u) => u.active).length;
