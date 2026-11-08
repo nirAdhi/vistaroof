@@ -77,7 +77,15 @@ def _request(method: str, path: str, key: str, body: dict[str, Any] | None = Non
         try:
             with build_http_client(timeout) as http:
                 resp = http.request(method, path, json=body, headers=headers)
-        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError, httpx.NetworkError) as exc:
+        except (httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
+            # Google accepted the request but the answer did not come in time (a large photo, a slow moment at the
+            # API): try once more before giving up on this file.
+            if attempt < MAX_ATTEMPTS - 1:
+                log.warning("gemini: %s on attempt %d, retrying", type(exc).__name__, attempt)
+                time.sleep(RETRY_SLEEP * attempt)
+                continue
+            raise RuntimeError(f"Gemini did not answer within {timeout or config.GEMINI_TIMEOUT:g} s ({type(exc).__name__}); the file is retried on the next sync") from exc
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.NetworkError) as exc:
             raise ApiUnavailable(f"Gemini API is not reachable ({type(exc).__name__}: {str(exc)[:120] or 'no details'}). "
                                  "Check the internet connection / outbound firewall.") from exc
         if resp.status_code < 400:

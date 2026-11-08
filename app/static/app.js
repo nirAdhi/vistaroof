@@ -900,7 +900,7 @@
       <div class="card" style="margin:0 0 14px;padding:12px 14px">
         <div class="sync-status">Document reader: ${reader}</div>
         <div class="sync-status" style="margin-top:4px"><span class="ai-badge ${lcls}">${esc(l.label || "Checking…")}</span>
-          <span class="muted small" style="margin-left:8px">${esc(l.message || "")}${l.checked_at ? ` · checked ${aiTime(l.checked_at)}` : ""}${l.fallback ? " · Claude fallback on" : ""}</span></div>
+          <span class="muted small" style="margin-left:8px">${esc(l.message || "")}${l.checked_at ? ` · checked ${aiTime(l.checked_at)}` : ""}${l.fallback ? ` · fallback: ${esc({ ollama: "Ollama", claude: "Claude", gemini: "Gemini" }[l.fallback] || l.fallback)}` : ""}</span></div>
         <div class="small" style="margin-top:8px">Figures in this ledger were read by: ${readBy.length ? readBy.map(([m, n]) => `<span class="chip ${m.startsWith("ollama/") ? "in" : "pipe"}">${esc(m.startsWith("ollama/") ? "Ollama " + m.slice(7) : m.startsWith("gemini/") ? "Gemini " + m.slice(7) : m)}: ${n} document${n === 1 ? "" : "s"}</span>`).join(" ") : "nothing read yet"}</div>
       </div>
       <div class="sync-status"><b>${esc(st.message || (st.running ? "Working…" : "Idle"))}</b>${st.current_source ? ` — ${esc(st.current_source)}` : ""}${st.current_file ? ` · ${esc(st.current_file)}` : ""}</div>

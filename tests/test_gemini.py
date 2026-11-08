@@ -121,6 +121,20 @@ def test_transient_503_is_retried(monkeypatch, fresh_db):
     assert fields["doc_type"] == "sales_invoice" and len(fake.requests) == 1
 
 
+def test_a_slow_answer_is_retried_once_then_a_per_file_error(monkeypatch, fresh_db):
+    """A read timeout (large photo, slow moment at Google) is retried once; a second one is this file's error,
+    not an outage that stops the run or fails the fallback for every file."""
+    fake = FakeGemini()
+    install_fake_gemini(monkeypatch, fake)
+    fake.timeouts = 1
+    fields, _ = extract.extract(_meta("INV-1.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+    assert fields["doc_type"] == "sales_invoice" and len(fake.requests) == 1
+    fake.timeouts = 5
+    with pytest.raises(RuntimeError, match="did not answer within") as info:
+        extract.extract(_meta("INV-2.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+    assert not isinstance(info.value, extract.ApiUnavailable)
+
+
 def test_fallbacks_between_the_three_readers(monkeypatch, fresh_db, fake_claude):
     """Ollama → Gemini for a photo; Gemini → Claude when Gemini's quota is gone; Claude → Gemini when Claude has no credit."""
     ol, ge = FakeOllama(), FakeGemini()

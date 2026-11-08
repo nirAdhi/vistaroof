@@ -41,6 +41,7 @@ class FakeGemini:
         self.quota = False
         self.down = False
         self.flaky_503 = 0  # number of 503s to answer before succeeding
+        self.timeouts = 0  # number of read timeouts to raise before succeeding
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -62,6 +63,9 @@ class FakeGemini:
     def handle(self, request: httpx.Request) -> httpx.Response:
         if self.down:
             raise httpx.ConnectError("name resolution failed", request=request)
+        if self.timeouts > 0 and request.url.path.endswith(":generateContent"):
+            self.timeouts -= 1
+            raise httpx.ReadTimeout("The read operation timed out", request=request)
         assert "key=" not in str(request.url), "the key must travel in the header, never the URL"
         if request.headers.get("x-goog-api-key") != self.key:
             return httpx.Response(400, json={"error": {"code": 400, "status": "INVALID_ARGUMENT", "message": "API key not valid. Please pass a valid API key."}})
