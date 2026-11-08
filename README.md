@@ -88,7 +88,7 @@ The reader is chosen under Admin → Document reader (default from `LLM_PROVIDER
 | | `ollama` (default) | `claude` | `gemini` |
 |---|---|---|---|
 | Where the content goes | A self-hosted Ollama server on your network; nothing leaves the LAN | The Anthropic API | The Google Gemini API |
-| Reads | Text PDFs, Excel, Word, text/CSV (text is extracted first, `app/textract.py`); photos and scanned PDFs too when `OLLAMA_VISION_MODEL` names a vision model (e.g. `qwen3-vl:2b`) | Everything, incl. photos and scanned PDFs | Everything, incl. photos and scanned PDFs |
+| Reads | Text PDFs, Excel, Word, LibreOffice (.odt/.ods), text/CSV (text is extracted first, `app/textract.py`); photos and scanned PDFs too when `OLLAMA_VISION_MODEL` names a vision model (e.g. `qwen3-vl:2b`) | Everything, incl. photos and scanned PDFs | Everything, incl. photos and scanned PDFs |
 | Needs | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` (e.g. `qwen2.5:3b`) | A Claude key (Admin) | A Gemini key (Admin); model `auto` = newest Flash the key can use |
 | Prompt | Short prompt + flat JSON schema written for a 3B model | Full prompt + strict schema | Full prompt + response schema |
 | Client | `app/ollama.py` (native API over httpx) | Anthropic SDK | `app/gemini.py` (REST over httpx, key in a header) |
@@ -139,7 +139,7 @@ docker compose up -d --build
 ## Development
 
 ```
-.venv\Scripts\python -m pytest tests        # 103 tests, no network (fake Claude, fake Ollama, fake Gemini, fake Drive, fake Graph, fake SMTP)
+.venv\Scripts\python -m pytest tests        # 105 tests, no network (fake Claude, fake Ollama, fake Gemini, fake Drive, fake Graph, fake SMTP)
 .venv\Scripts\python -m pip_audit           # dependency vulnerabilities
 .venv\Scripts\python -m bandit -r app -ll   # static analysis
 ```

@@ -188,7 +188,9 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
         _set(phase="processing", message=f"{len(files)} files in {src['name']}")
         db.update_run(run_id, total=len(files))
         base = dict(processed=_state["processed"], skipped=_state["skipped"], errors=_state["errors"])
-        retry = extract.NEEDS_VISION_PREFIX if extract.vision_available() else None  # re-read skipped photos / scans once a vision reader exists
+        # Skipped files worth another look: photos / scans once a vision reader exists, and file types the app has
+        # since learnt to read (a still-unsupported type is skipped again in a millisecond, no download involved).
+        retry = ("unsupported file type",) + ((extract.NEEDS_VISION_PREFIX,) if extract.vision_available() else ())
         with ThreadPoolExecutor(max_workers=max(1, settings.get_int("concurrency", 3))) as pool:
             futures = {pool.submit(_process_one, source, meta, force, retry): meta for meta in files}
             for fut in as_completed(futures):
@@ -233,7 +235,7 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
         log.exception("sync of %s failed", src["name"])
 
 
-def _process_one(source, meta: FileMeta, force: bool, retry_prefix: str | None = None) -> str:
+def _process_one(source, meta: FileMeta, force: bool, retry_prefix: str | tuple[str, ...] | None = None) -> str:
     """Read one file if needed. Returns the resulting status."""
     if _state["stop_requested"]:
         return "stopped"  # not even recorded: the next sync sees it as a new file

@@ -30,10 +30,46 @@ class NeedsVision(ValueError):
     """The file has no extractable text (photo, scanned PDF); only a vision model can read it."""
 
 
+_ODF_TEXT = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
+_ODF_TABLE = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}"
+
+
+def odf_to_text(data: bytes, spreadsheet: bool) -> str:
+    """OpenDocument (.odt / .ods, LibreOffice) → text. The file is a zip; ``content.xml`` holds the body.
+    Writer: paragraphs and headings in order. Calc: one line per row, cells joined with " | "."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            root = ET.fromstring(z.read("content.xml"))
+    except (zipfile.BadZipFile, KeyError, ET.ParseError) as exc:
+        raise ValueError(f"could not read OpenDocument file ({type(exc).__name__})") from exc
+    parts: list[str] = []
+    if spreadsheet:
+        for table in root.iter(f"{_ODF_TABLE}table"):
+            parts.append(f"## Sheet: {table.get(f'{_ODF_TABLE}name', '')}")
+            for row in table.iter(f"{_ODF_TABLE}table-row"):
+                cells = ["".join(c.itertext()).strip() for c in row if c.tag == f"{_ODF_TABLE}table-cell"]
+                if any(cells):
+                    parts.append(" | ".join(cells))
+    else:
+        for el in root.iter():
+            if el.tag in (f"{_ODF_TEXT}p", f"{_ODF_TEXT}h"):
+                t = "".join(el.itertext()).strip()
+                if t:
+                    parts.append(t)
+    return "\n".join(parts)
+
+
 def office_to_text(content: FileContent) -> str | None:
-    """Convert .docx / .xlsx bytes into plain text. None when the mime is not an Office type."""
+    """Convert .docx / .xlsx / .odt / .ods bytes into plain text. None when the mime is not an Office type."""
     if content.data is None:
         raise ValueError("office document has no content")
+    if content.mime == "application/vnd.oasis.opendocument.text":
+        return odf_to_text(content.data, spreadsheet=False)
+    if content.mime == "application/vnd.oasis.opendocument.spreadsheet":
+        return odf_to_text(content.data, spreadsheet=True)
     if content.mime.endswith("wordprocessingml.document"):
         import docx  # python-docx
 

@@ -220,7 +220,7 @@ def build_content_blocks(meta: FileMeta, content: FileContent) -> list[dict[str,
         except Exception as exc:  # unreadable / unsupported encoding
             raise ValueError(f"could not read image ({exc})")
         blocks.append({"type": "image", "source": {"type": "base64", "media_type": img_mime, "data": _b64(data)}})
-    elif mime.endswith("wordprocessingml.document") or mime.endswith("spreadsheetml.sheet"):
+    elif mime.endswith("wordprocessingml.document") or mime.endswith("spreadsheetml.sheet") or mime.startswith("application/vnd.oasis.opendocument."):
         text = _office_to_text(content)
         if not text or not text.strip():
             raise ValueError("no text found in office document")
@@ -687,9 +687,11 @@ NEEDS_VISION_PREFIX = "needs a vision reader"  # start of the skip reason; sync 
 
 
 def vision_available() -> bool:
-    """Can photos / scanned PDFs be read right now (a vision-capable reader or fallback with a key)?"""
+    """Can photos / scanned PDFs be read right now (a vision-capable reader, a local Ollama vision model, or such a fallback)?"""
     primary = settings.llm_provider()
     if primary in VISION_PROVIDERS and settings.provider_ready(primary):
+        return True
+    if primary == "ollama" and config.OLLAMA_VISION_MODEL:
         return True
     return fallback_for(primary) in VISION_PROVIDERS
 

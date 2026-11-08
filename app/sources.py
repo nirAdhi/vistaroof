@@ -57,15 +57,20 @@ for _ext, _mime in (
     (".csv", "text/csv"), (".txt", "text/plain"), (".pdf", "application/pdf"),
     (".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
     (".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    (".odt", "application/vnd.oasis.opendocument.text"),
+    (".ods", "application/vnd.oasis.opendocument.spreadsheet"),
 ):
     mimetypes.add_type(_mime, _ext)
 
+ODT_MIME = "application/vnd.oasis.opendocument.text"           # LibreOffice / OpenOffice Writer
+ODS_MIME = "application/vnd.oasis.opendocument.spreadsheet"    # LibreOffice / OpenOffice Calc
 SUPPORTED_MIMES = {
     "application/pdf",
     "image/png", "image/jpeg", "image/gif", "image/webp", "image/heic", "image/heif", "image/tiff", "image/bmp", "image/x-ms-bmp",
     "text/plain", "text/csv", "text/markdown",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ODT_MIME, ODS_MIME,
     GOOGLE_DOC, GOOGLE_SHEET, GOOGLE_SLIDES,
 }
 UPLOADABLE_MIMES = SUPPORTED_MIMES - {GOOGLE_DOC, GOOGLE_SHEET, GOOGLE_SLIDES}

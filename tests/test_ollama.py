@@ -142,6 +142,68 @@ def test_local_vision_model_reads_photos_and_scans(monkeypatch, fresh_db):
     assert h["ok"] and h["vision_model"] == "qwen3-vl:2b" and h["vision_installed"] is True and "Vision model qwen3-vl:2b is installed" in h["message"]
 
 
+def _odf(spreadsheet: bool, body_xml: str) -> bytes:
+    """A minimal LibreOffice file: a zip with mimetype + content.xml."""
+    import zipfile
+    mime = "application/vnd.oasis.opendocument." + ("spreadsheet" if spreadsheet else "text")
+    content = ('<?xml version="1.0" encoding="UTF-8"?><office:document-content '
+               'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+               'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" '
+               'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0">'
+               f'<office:body>{body_xml}</office:body></office:document-content>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("mimetype", mime)
+        z.writestr("content.xml", content)
+    return buf.getvalue()
+
+
+def test_libreoffice_odt_and_ods_are_read_as_text(monkeypatch, fresh_db, tmp_path, admin):
+    fake = FakeOllama()
+    install_fake_ollama(monkeypatch, fake)
+    odt = _odf(False, '<office:text><text:h>Vista Roofing Limited</text:h><text:p>INVOICE INV-2026-031 to <text:span>John Murphy</text:span></text:p><text:p>Total 1,230.00</text:p></office:text>')
+    ods = _odf(True, '<office:spreadsheet><table:table table:name="Statement"><table:table-row><table:table-cell><text:p>Date</text:p></table:table-cell><table:table-cell><text:p>AIB statement line</text:p></table:table-cell></table:table-row>'
+                     '<table:table-row><table:table-cell><text:p>2026-03-01</text:p></table:table-cell><table:table-cell><text:p>100.50</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet>')
+    from app import sources as src_mod
+    assert textract.odf_to_text(odt, False) == "Vista Roofing Limited\nINVOICE INV-2026-031 to John Murphy\nTotal 1,230.00"
+    assert textract.odf_to_text(ods, True) == "## Sheet: Statement\nDate | AIB statement line\n2026-03-01 | 100.50"
+    assert src_mod.guess_mime("Vista Oct 27- 29 Incl.odt") == src_mod.ODT_MIME and src_mod.ODT_MIME in src_mod.SUPPORTED_MIMES
+    fields, model = extract.extract(_meta("Vista Oct 27- 29 Incl.odt", src_mod.ODT_MIME), FileContent(mime=src_mod.ODT_MIME, data=odt))
+    assert model == "ollama/qwen2.5:3b" and fields["doc_type"] == "sales_invoice" and "INV-2026-031" in fake.requests[-1]["messages"][1]["content"]
+    fields, _ = extract.extract(_meta("march.ods", src_mod.ODS_MIME), FileContent(mime=src_mod.ODS_MIME, data=ods))
+    assert fields["doc_type"] == "bank_statement"
+    # a file skipped earlier as "unsupported file type" is re-read by the next sync once the type is supported
+    folder = tmp_path / "Docs"
+    folder.mkdir()
+    (folder / "Vista Oct 14 - 16 Incl.odt").write_bytes(odt)
+    source = admin.post("/api/admin/sources", json={"kind": "local", "name": "Docs", "local_folder": str(folder)}).json()
+    admin.post(f"/api/admin/sources/{source['id']}/sync"); wait_sync()
+    doc = admin.get("/api/documents?limit=10").json()[0]
+    from app import db
+    db.mark_skipped(doc["id"], "unsupported file type (application/vnd.oasis.opendocument.text)")  # how the old version left it
+    admin.post(f"/api/admin/sources/{source['id']}/sync"); wait_sync()
+    assert admin.get(f"/api/documents/{doc['id']}").json()["status"] == "done"
+
+
+def test_skipped_photos_are_re_read_once_a_local_vision_model_is_configured(monkeypatch, fresh_db, tmp_path, admin):
+    fake = FakeOllama(models=("qwen2.5:3b", "qwen3-vl:2b"))
+    install_fake_ollama(monkeypatch, fake)
+    folder = tmp_path / "Docs"
+    folder.mkdir()
+    (folder / "Stefan Baciu Invoice 96.jpg").write_bytes(jpeg_bytes())
+    (folder / "INV-1.txt").write_text(INVOICE_TEXT, encoding="utf-8")
+    source = admin.post("/api/admin/sources", json={"kind": "local", "name": "Docs", "local_folder": str(folder)}).json()
+    admin.post(f"/api/admin/sources/{source['id']}/sync"); wait_sync()
+    docs = {d["name"]: d for d in admin.get("/api/documents?limit=10").json()}
+    assert docs["Stefan Baciu Invoice 96.jpg"]["status"] == "skipped"  # vision off: skipped with the reason
+    monkeypatch.setattr(config, "OLLAMA_VISION_MODEL", "qwen3-vl:2b")  # the admin pulls the model and sets .env
+    n = len(fake.requests)
+    admin.post(f"/api/admin/sources/{source['id']}/sync"); wait_sync()
+    docs = {d["name"]: d for d in admin.get("/api/documents?limit=10").json()}
+    assert docs["Stefan Baciu Invoice 96.jpg"]["status"] == "done" and len(fake.requests) == n + 1  # only the photo was re-read
+    assert admin.get(f"/api/documents/{docs['Stefan Baciu Invoice 96.jpg']['id']}").json()["model"] == "ollama/qwen3-vl:2b"
+
+
 def test_vision_model_set_but_not_pulled(monkeypatch, fresh_db):
     fake = FakeOllama(models=("qwen2.5:3b",))
     install_fake_ollama(monkeypatch, fake)
