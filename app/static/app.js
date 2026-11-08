@@ -272,8 +272,9 @@
   function tile({ label: l, value, sub, cls = "", color, pct, onClick }) {
     const bar = pct != null ? `<div class="bar"><i style="width:${Math.max(0, Math.min(100, pct))}%;background:${color || "var(--accent)"}"></i></div>` : "";
     const shown = typeof value === "number" ? money(value, false) : String(value ?? "");
-    const size = shown.length > 12 ? "xlong" : shown.length > 9 ? "long" : "";  // €12,345,678 and the like must not spill out of the tile
-    return `<div class="card tile ${cls} ${onClick ? "clickable" : ""}" ${onClick ? `data-go="${onClick}"` : ""}><div class="label">${esc(l)}</div><div class="value ${value < 0 ? "neg" : ""} ${size}" title="${esc(shown)}">${typeof value === "number" ? shown : esc(shown)}</div>${sub ? `<div class="delta">${sub}</div>` : ""}${bar}</div>`;
+    const size = shown.length > 12 ? "xlong" : shown.length > 9 ? "long" : "";  // the whole figure stays visible: a wider tile first, a smaller font after
+    const exact = typeof value === "number" ? money(value, true) : shown;
+    return `<div class="card tile ${cls} ${onClick ? "clickable" : ""} ${size ? "wide" : ""}" ${onClick ? `data-go="${onClick}"` : ""}><div class="label">${esc(l)}</div><div class="value ${value < 0 ? "neg" : ""} ${size}" title="${esc(exact)}">${typeof value === "number" ? shown : esc(shown)}</div>${sub ? `<div class="delta">${sub}</div>` : ""}${bar}</div>`;
   }
 
   function statusChip(s) { return s ? `<span class="status ${esc(s)}">${label(s)}</span>` : "—"; }
