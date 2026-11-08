@@ -593,6 +593,18 @@ def fallback_for(primary: str) -> str | None:
     return fb if fb and fb != primary and settings.provider_ready(fb) else None
 
 
+VISION_PROVIDERS = ("claude", "gemini")
+NEEDS_VISION_PREFIX = "needs a vision reader"  # start of the skip reason; sync retries such files once one is available
+
+
+def vision_available() -> bool:
+    """Can photos / scanned PDFs be read right now (a vision-capable reader or fallback with a key)?"""
+    primary = settings.llm_provider()
+    if primary in VISION_PROVIDERS and settings.provider_ready(primary):
+        return True
+    return fallback_for(primary) in VISION_PROVIDERS
+
+
 def extract(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
     """Read one document with the chosen reader, falling back to the second one when the first cannot.
 
@@ -606,8 +618,8 @@ def extract(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
         if fb:
             log.info("%s: %s — handing it to %s (fallback reader)", meta.name, exc, fb)
             return EXTRACTORS[fb](meta, content)
-        raise ValueError(f"{exc}: the text-only model ({config.OLLAMA_MODEL}) cannot read it. Choose Claude or Gemini as the "
-                         "fallback reader in Admin → Document reader (needs that key), or as the reader.") from exc
+        raise ValueError(f"{NEEDS_VISION_PREFIX}: {exc} — the text-only model ({config.OLLAMA_MODEL}) cannot read it. Choose Claude or "
+                         "Gemini as the fallback reader in Admin → Document reader (needs that key); the next sync then reads this file.") from exc
     except ApiUnavailable as exc:
         if fb:
             log.warning("%s: %s — handing it to %s (fallback reader)", meta.name, exc, fb)

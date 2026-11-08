@@ -184,8 +184,9 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
         _set(phase="processing", message=f"{len(files)} files in {src['name']}")
         db.update_run(run_id, total=len(files))
         base = dict(processed=_state["processed"], skipped=_state["skipped"], errors=_state["errors"])
+        retry = extract.NEEDS_VISION_PREFIX if extract.vision_available() else None  # re-read skipped photos / scans once a vision reader exists
         with ThreadPoolExecutor(max_workers=max(1, settings.get_int("concurrency", 3))) as pool:
-            futures = {pool.submit(_process_one, source, meta, force): meta for meta in files}
+            futures = {pool.submit(_process_one, source, meta, force, retry): meta for meta in files}
             for fut in as_completed(futures):
                 if fut.cancelled():
                     continue
@@ -228,12 +229,12 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
         log.exception("sync of %s failed", src["name"])
 
 
-def _process_one(source, meta: FileMeta, force: bool) -> str:
+def _process_one(source, meta: FileMeta, force: bool, retry_prefix: str | None = None) -> str:
     """Read one file if needed. Returns the resulting status."""
     if _state["stop_requested"]:
         return "stopped"  # not even recorded: the next sync sees it as a new file
     doc_id = db.upsert_file_metadata(meta.as_dict())
-    if not db.needs_processing(doc_id, force=force):
+    if not db.needs_processing(doc_id, force=force, retry_prefix=retry_prefix):
         _bump("skipped")
         return "unchanged"
     _set(current_file=meta.name)

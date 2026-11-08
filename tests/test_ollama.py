@@ -214,6 +214,30 @@ def test_sync_end_to_end_with_ollama_and_no_claude_key(admin, fresh_db, monkeypa
     assert all(d["status"] != "error" for d in admin.get("/api/documents?limit=100").json())
 
 
+def test_skipped_photos_are_read_by_the_next_sync_once_a_vision_reader_exists(admin, fresh_db, monkeypatch, tmp_path, fake_claude):
+    fake = FakeOllama()
+    install_fake_ollama(monkeypatch, fake)
+    settings.set_value("anthropic_api_key", "")  # Ollama only, no fallback yet
+    folder = tmp_path / "Docs"
+    folder.mkdir()
+    (folder / "INV-1.txt").write_text(INVOICE_TEXT, encoding="utf-8")
+    (folder / "photo.jpg").write_bytes(jpeg_bytes())
+    src = admin.post("/api/admin/sources", json={"kind": "local", "name": "Docs", "local_folder": str(folder)}).json()
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    docs = {d["name"]: d for d in admin.get("/api/documents?limit=100").json()}
+    assert docs["photo.jpg"]["status"] == "skipped" and docs["photo.jpg"]["error"].startswith("needs a vision reader")
+    # a plain sync changes nothing while no vision reader exists
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    assert {d["name"]: d["status"] for d in admin.get("/api/documents?limit=100").json()}["photo.jpg"] == "skipped" and len(fake.requests) == 1
+    # the admin names Claude as the fallback: the next ordinary sync reads just the photo
+    from conftest import FAKE_KEY
+    settings.set_many({"anthropic_api_key": FAKE_KEY, "llm_fallback": "claude"})
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    docs = {d["name"]: d for d in admin.get("/api/documents?limit=100").json()}
+    assert docs["photo.jpg"]["status"] == "done" and len(fake_claude.calls) == 1 and len(fake.requests) == 1  # the text file was not re-read
+    assert admin.get(f"/api/documents/{docs['photo.jpg']['id']}").json()["model"] == "fake-model"
+
+
 def test_claude_provider_still_works_and_needs_a_key(admin, fresh_db, monkeypatch, fake_claude):
     settings.set_value("llm_provider", "claude")
     cfg = admin.get("/api/config").json()

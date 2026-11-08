@@ -418,17 +418,22 @@ def mark_missing(source_ref: int, present_source_ids: set[str]) -> int:
     return len(gone)
 
 
-def needs_processing(doc_id: int, force: bool = False) -> bool:
-    """Decide whether a file must be (re-)read. Hand-edited documents are never re-read automatically."""
+def needs_processing(doc_id: int, force: bool = False, retry_prefix: str | None = None) -> bool:
+    """Decide whether a file must be (re-)read. Hand-edited documents are never re-read automatically.
+
+    ``retry_prefix``: a skipped file whose reason starts with it is read again (used for photos /
+    scans skipped by a text-only reader once a vision-capable reader is available)."""
     with connect() as conn:
         row = conn.execute(
-            "SELECT status, modified_at, processed_modified_at, overridden FROM documents WHERE id=?", (doc_id,)
+            "SELECT status, error, modified_at, processed_modified_at, overridden FROM documents WHERE id=?", (doc_id,)
         ).fetchone()
     if row is None:
         return False
     if row["overridden"]:
         return False
     if force:
+        return True
+    if row["status"] == "skipped" and retry_prefix and (row["error"] or "").startswith(retry_prefix):
         return True
     if row["status"] in ("done", "skipped") and row["processed_modified_at"] == row["modified_at"]:
         return False
