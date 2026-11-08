@@ -634,6 +634,18 @@ def vision_available() -> bool:
     return fallback_for(primary) in VISION_PROVIDERS
 
 
+def extract_with(provider: str, meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
+    """Read one document with a reader the admin picked for this file (the drawer's "Re-read with…"). No fallback."""
+    if provider not in EXTRACTORS:
+        raise ValueError(f"unknown reader {provider!r}")
+    if not settings.provider_ready(provider):
+        raise ApiUnavailable(f"{config.PROVIDER_LABELS[provider]} has no API key saved (Admin → Document reader).")
+    try:
+        return EXTRACTORS[provider](meta, content)
+    except textract.NeedsVision as exc:
+        raise ValueError(f"{NEEDS_VISION_PREFIX}: {exc} — {config.PROVIDER_LABELS[provider]} reads text only; choose Claude or Gemini for this file.") from exc
+
+
 def extract(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
     """Read one document with the chosen reader, falling back to the second one when the first cannot.
 

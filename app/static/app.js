@@ -800,6 +800,19 @@
   backdrop.addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (viewer.classList.contains("open")) closeViewer(); else if (drawer.classList.contains("open")) closeDrawer(); else if (accountModal.classList.contains("open")) closeAccount(); else closeCompany(); } });
 
+  const READER_NAMES = { ollama: "Ollama", claude: "Claude", gemini: "Gemini" };
+  /** Options for "Re-read with": every reader with a key, the current one first; a photo/scan that Ollama skipped
+   *  preselects the first reader that can see images, since sending it to Ollama again would skip it again. */
+  function readerOptions(d) {
+    const provs = (state.config.providers || []).filter((p) => p.ready);
+    const needsVision = d.status === "skipped" && /vision reader/.test(d.error || "");
+    const current = state.config.llm_provider;
+    let pick = current;
+    if (needsVision || current === "ollama" && /^image\//.test(d.mime || "")) pick = (provs.find((p) => p.id !== "ollama") || {}).id || current;
+    return provs.map((p) => `<option value="${p.id}" ${p.id === pick ? "selected" : ""}>${esc(READER_NAMES[p.id] || p.label)}${p.id === current ? " (current reader)" : ""}${p.id === "ollama" ? " — text only" : ""}</option>`).join("")
+      || `<option value="">No reader has a key yet</option>`;
+  }
+
   /** Details drawer: inline preview + editable extracted fields (PATCH) + re-read (POST reprocess). */
   async function openDoc(id) {
     const d = await api(`/api/documents/${id}`);
@@ -842,11 +855,11 @@
       <div class="actions">
         <button class="btn primary" type="submit">Save changes</button>
         ${d.web_link ? `<a class="btn" href="${esc(d.web_link)}" target="_blank" rel="noopener">${openWhere(d)}</a>` : ""}
-        ${d.source !== "demo" ? `<button class="btn" type="button" id="reprocessBtn">Re-read with Claude</button>` : ""}
+        ${d.source !== "demo" ? `<span class="inline" style="display:inline-flex;gap:6px;align-items:center"><select id="reprocessWith" title="Which reader to use for this file">${readerOptions(d)}</select><button class="btn" type="button" id="reprocessBtn">Re-read</button></span>` : ""}
       </div>
       </form>
       ${items}
-      <p class="muted small" style="margin-top:16px">Saved changes are kept even when the file is re-synced. Use “Re-read with Claude” to discard them and extract again.</p>`;
+      <p class="muted small" style="margin-top:16px">Saved changes are kept even when the file is re-synced. “Re-read” discards them and extracts the file again with the reader you pick — useful for a photo or scan that the text-only Ollama model skipped: send just that file to Claude or Gemini.</p>`;
     $("#drawerClose").addEventListener("click", closeDrawer);
     const dp = $("#drawerPreview"); if (dp) dp.addEventListener("click", () => openPreview(d));
     bindCompanies(drawer);
@@ -862,9 +875,10 @@
     });
     const rp = $("#reprocessBtn");
     if (rp) rp.addEventListener("click", async () => {
+      const prov = $("#reprocessWith").value;
       rp.disabled = true; rp.textContent = "Reading…";
-      try { await api(`/api/documents/${id}/reprocess`, { method: "POST" }); toast("Document re-read"); await refresh(); openDoc(id); }
-      catch (err) { toast("Failed: " + err.message, 6000); rp.disabled = false; rp.textContent = "Re-read with Claude"; }
+      try { await api(`/api/documents/${id}/reprocess${prov ? `?provider=${prov}` : ""}`, { method: "POST" }); toast(`Document re-read with ${READER_NAMES[prov] || "the current reader"}`); await refresh(); openDoc(id); }
+      catch (err) { toast("Failed: " + err.message, 8000); rp.disabled = false; rp.textContent = "Re-read"; }
     });
     drawer.classList.add("open"); backdrop.classList.add("open"); drawer.scrollTop = 0;
   }

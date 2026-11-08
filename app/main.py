@@ -459,15 +459,30 @@ def patch_document(doc_id: int, patch: DocumentPatch) -> dict[str, Any]:
 
 
 @app.post("/api/documents/{doc_id}/reprocess", dependencies=[Depends(require_login)])
-def reprocess_document(doc_id: int) -> dict[str, Any]:
-    _require_api_key()
+def reprocess_document(doc_id: int, provider: str | None = Query(None, max_length=10)) -> dict[str, Any]:
+    """Re-read one document; ``provider`` picks a specific reader for this file (e.g. Gemini for a photo Ollama skipped)."""
+    if provider:
+        provider = provider.strip().lower()
+        if provider not in config.PROVIDERS:
+            raise HTTPException(400, f"reader must be one of {', '.join(config.PROVIDERS)}")
+        if not settings.provider_ready(provider):
+            raise HTTPException(400, f"{config.PROVIDER_LABELS[provider]} has no API key saved (Admin → Document reader)")
+    else:
+        _require_api_key()
     try:
-        return sync.reprocess(doc_id)
+        doc = sync.reprocess(doc_id, provider)
     except KeyError:
         raise HTTPException(404, "document not found")
+    except ValueError as exc:  # unreadable for this reader (photo to a text-only model, unsupported type): tell the user why
+        raise HTTPException(400, str(exc)[:300])
     except Exception as exc:
         log.warning("reprocess of %s failed: %s", doc_id, exc)
         raise HTTPException(500, f"Could not re-read the document." + (f" ({exc})" if config.DEBUG else ""))
+    if doc.get("status") == "skipped":  # the reader could not take this file; the row keeps the reason
+        raise HTTPException(400, (doc.get("error") or "the reader skipped this file")[:300])
+    if doc.get("status") == "error":
+        raise HTTPException(502, f"The reader could not read this file: {doc.get('error') or 'unknown error'}"[:300])
+    return doc
 
 
 @app.post("/api/sync", dependencies=[Depends(require_login)])

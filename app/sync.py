@@ -276,8 +276,9 @@ def _process_one(source, meta: FileMeta, force: bool, retry_prefix: str | None =
         return "error"
 
 
-def reprocess(doc_id: int) -> dict[str, Any]:
-    """Re-run extraction for a single stored document (synchronously), discarding hand edits."""
+def reprocess(doc_id: int, provider: str | None = None) -> dict[str, Any]:
+    """Re-run extraction for a single stored document (synchronously), discarding hand edits.
+    ``provider`` forces a particular reader for this file (e.g. Gemini for a photo Ollama skipped)."""
     row = db.get_document(doc_id)
     if row is None:
         raise KeyError(doc_id)
@@ -295,7 +296,7 @@ def reprocess(doc_id: int) -> dict[str, Any]:
     db.set_status(doc_id, "processing")
     try:
         content = source.fetch(meta)
-        fields, model = extract.extract(meta, content)
+        fields, model = extract.extract_with(provider, meta, content) if provider else extract.extract(meta, content)
         db.save_extraction(doc_id, fields, model)
     except ValueError as exc:
         db.mark_skipped(doc_id, str(exc))

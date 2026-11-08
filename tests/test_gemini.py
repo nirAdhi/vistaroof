@@ -168,6 +168,42 @@ def test_ask_with_gemini_and_status_badge(admin, fresh_db, monkeypatch):
     assert admin.post("/api/sync").status_code == 400
 
 
+def test_a_skipped_photo_can_be_re_read_with_another_reader(admin, fresh_db, monkeypatch, tmp_path):
+    """Ollama is the reader and skips a photo; the owner sends just that file to Gemini from the drawer."""
+    ol, ge = FakeOllama(), FakeGemini()
+    install_fake_ollama(monkeypatch, ol)
+    install_fake_gemini(monkeypatch, ge, as_provider=False)  # Gemini has a key but is neither reader nor fallback
+    folder = tmp_path / "Docs"
+    folder.mkdir()
+    (folder / "till.jpg").write_bytes(jpeg_bytes())
+    (folder / "INV-1.txt").write_text(INVOICE_TEXT, encoding="utf-8")
+    src = admin.post("/api/admin/sources", json={"kind": "local", "name": "Docs", "local_folder": str(folder)}).json()
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    docs = {d["name"]: d for d in admin.get("/api/documents?limit=100").json()}
+    assert docs["till.jpg"]["status"] == "skipped" and docs["INV-1.txt"]["status"] == "done"
+    photo, inv = docs["till.jpg"]["id"], docs["INV-1.txt"]["id"]
+    # the readers the drawer may offer
+    assert [p["id"] for p in admin.get("/api/config").json()["providers"] if p["ready"]] == ["ollama", "gemini"]
+    # same reader again: still cannot, with a clear reason
+    r = admin.post(f"/api/documents/{photo}/reprocess?provider=ollama")
+    assert r.status_code == 400 and "reads text only" in r.json()["detail"]
+    # a reader without a key, or an unknown one
+    assert admin.post(f"/api/documents/{photo}/reprocess?provider=claude").status_code == 400
+    assert admin.post(f"/api/documents/{photo}/reprocess?provider=gpt").status_code == 400
+    # Gemini reads the photo; the ledger keeps which model did it
+    r = admin.post(f"/api/documents/{photo}/reprocess?provider=gemini")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "done" and r.json()["doc_type"] == "receipt" and r.json()["model"] == "gemini/gemini-2.5-flash"
+    assert ge.requests[-1]["contents"][0]["parts"][0]["inlineData"]["mimeType"] == "image/jpeg"
+    # the text invoice can also be re-read with Gemini on demand; the main reader stays Ollama
+    r = admin.post(f"/api/documents/{inv}/reprocess?provider=gemini")
+    assert r.status_code == 200 and r.json()["model"] == "gemini/gemini-2.5-flash" and settings.llm_provider() == "ollama"
+    assert admin.get("/api/sync/status").json()["read_by"] == {"gemini/gemini-2.5-flash": 2}
+    # without a provider the current reader is used
+    r = admin.post(f"/api/documents/{inv}/reprocess")
+    assert r.status_code == 200 and r.json()["model"] == "ollama/qwen2.5:3b"
+
+
 def test_gemini_key_is_validated_masked_and_encrypted(admin, fresh_db, monkeypatch):
     assert admin.put("/api/admin/settings", json={"gemini_api_key": "short"}).status_code == 400
     assert admin.put("/api/admin/settings", json={"gemini_model": "../etc"}).status_code == 400
