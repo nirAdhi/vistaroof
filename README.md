@@ -100,6 +100,7 @@ OLLAMA_BASE_URL=http://192.168.0.183:11434   # the Ollama PC; keep it off the in
 OLLAMA_MODEL=qwen2.5:3b
 # OLLAMA_VISION_MODEL=qwen3-vl:2b   # optional: photos and scanned PDFs read locally too (ollama pull qwen3-vl:2b); images are shrunk to 1600 px
 # OLLAMA_NUM_CTX=8192  OLLAMA_TIMEOUT=180  OLLAMA_KEEP_ALIVE=30m
+# OLLAMA_VISION_TIMEOUT=300  OLLAMA_VISION_MAX_SIDE=1280   # per photo / scan; a slower file is skipped, never an outage
 # GEMINI_API_KEY=AIza...  GEMINI_MODEL=auto    (or paste the key in Admin, stored encrypted; auto = newest Flash model for the key)
 ```
 
@@ -111,6 +112,14 @@ are cut to fit, keeping the start and the end), `keep_alive` 30m and a 180 s tim
 answer is retried twice with the error pointed out. If the Ollama PC is asleep the sync stops with
 one clear message instead of failing every file; photos and scanned PDFs are marked *skipped* with
 the reason unless the Claude fallback is on.
+
+A file is never allowed to stall the sync: when a request times out but the Ollama server still
+answers a probe, that *file* is skipped as "reader too slow" (hand it to the fallback reader if one
+is set, enter it by hand, or Re-read it later) and the run carries on. Only a server that answers
+nothing is reported as unreachable. A file whose read fails with an error is retried on the next two
+syncs at most; after three attempts it rests as an error (with "gave up" in the message) until it
+changes, a Full re-read, Re-read, or a hand entry. Rows left "processing" by a restart mid-sync go
+back to pending at start-up.
 
 ### Entering a document by hand
 

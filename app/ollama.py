@@ -42,6 +42,15 @@ class ModelMissing(ApiUnavailable):
     """The configured model is not pulled on the server."""
 
 
+class TooSlow(ValueError):
+    """The server is alive but did not finish this one request within the timeout (a handwritten photo
+    on a small GPU, a model swap). A ValueError so the file is *skipped* and the run carries on — never
+    an outage, which would stop the run and retry the same slow file on every sync."""
+
+
+TOO_SLOW_PREFIX = "reader too slow"
+
+
 def build_http_client(timeout: float | None = None) -> httpx.Client:
     """One place to build the client so tests can route it through a fake transport."""
     t = timeout if timeout is not None else config.OLLAMA_TIMEOUT
@@ -55,11 +64,29 @@ def _unreachable(exc: Exception) -> Unreachable:
     )
 
 
+def _alive() -> bool:
+    """Quick version probe: distinguishes a slow answer from a dead server."""
+    try:
+        _get("/api/version", timeout=10)
+        return True
+    except Exception:
+        return False
+
+
 def _post(path: str, body: dict[str, Any], timeout: float | None = None) -> dict[str, Any]:
+    t = timeout if timeout is not None else config.OLLAMA_TIMEOUT
     try:
         with build_http_client(timeout) as http:
             resp = http.post(path, json=body)
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError, httpx.NetworkError) as exc:
+    except httpx.ReadTimeout as exc:
+        # The request was accepted but no answer came in time. If the server still answers a probe the
+        # *file* is the problem (too slow for this model / GPU), not the connection.
+        if _alive():
+            raise TooSlow(f"{TOO_SLOW_PREFIX}: Ollama model {body.get('model')} did not finish this file within {t:g} s "
+                          f"(the server itself answers). Enter the figures by hand, re-read it with another reader, "
+                          f"or raise OLLAMA_TIMEOUT / OLLAMA_VISION_TIMEOUT in .env.") from exc
+        raise _unreachable(exc) from exc
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.RemoteProtocolError, httpx.NetworkError) as exc:
         raise _unreachable(exc) from exc
     if resp.status_code == 404 and "model" in resp.text.lower():
         raise ModelMissing(f"Ollama has no model named '{body.get('model')}'. On the Ollama PC run: ollama pull {body.get('model')}")
@@ -68,9 +95,9 @@ def _post(path: str, body: dict[str, Any], timeout: float | None = None) -> dict
     return resp.json()
 
 
-def _get(path: str) -> dict[str, Any]:
+def _get(path: str, timeout: float = 20) -> dict[str, Any]:
     try:
-        with build_http_client(20) as http:
+        with build_http_client(timeout) as http:
             resp = http.get(path)
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError, httpx.NetworkError) as exc:
         raise _unreachable(exc) from exc
@@ -83,17 +110,18 @@ def _options(num_predict: int) -> dict[str, Any]:
     return {"temperature": 0, "num_ctx": max(config.OLLAMA_NUM_CTX, 8192), "num_predict": num_predict}
 
 
-def chat(messages: list[dict[str, Any]], *, schema: dict[str, Any] | None = None, num_predict: int = 1024, model: str | None = None) -> str:
+def chat(messages: list[dict[str, Any]], *, schema: dict[str, Any] | None = None, num_predict: int = 1024, model: str | None = None,
+         timeout: float | None = None) -> str:
     """One ``/api/chat`` call; returns the assistant text. ``schema`` turns on constrained JSON output.
-    ``model`` overrides OLLAMA_MODEL (the vision model). A user message may carry Ollama's native
-    ``"images": [<base64>, …]`` field next to its ``content``."""
+    ``model`` overrides OLLAMA_MODEL (the vision model); ``timeout`` overrides OLLAMA_TIMEOUT (vision requests
+    get OLLAMA_VISION_TIMEOUT). A user message may carry Ollama's native ``"images": [<base64>, …]`` field."""
     body: dict[str, Any] = {
         "model": model or config.OLLAMA_MODEL, "messages": messages, "stream": False,
         "options": _options(num_predict), "keep_alive": config.OLLAMA_KEEP_ALIVE,
     }
     if schema is not None:
         body["format"] = schema
-    data = _post("/api/chat", body)
+    data = _post("/api/chat", body, timeout)
     if data.get("error"):
         raise RuntimeError(f"Ollama error: {data['error']}")
     return (data.get("message") or {}).get("content", "") or ""
@@ -103,7 +131,7 @@ parse_json_object = modelout.parse_json_object
 
 
 def chat_json(messages: list[dict[str, Any]], schema: dict[str, Any], validate, *, num_predict: int = 1024,
-              model: str | None = None) -> tuple[dict[str, Any], int]:
+              model: str | None = None, timeout: float | None = None) -> tuple[dict[str, Any], int]:
     """``chat`` with JSON output, parsed and checked by ``validate(obj) -> obj``; retries on a bad answer.
 
     ``validate`` raises ValueError for anything it cannot accept. Up to MAX_JSON_RETRIES extra calls are
@@ -111,7 +139,7 @@ def chat_json(messages: list[dict[str, Any]], schema: dict[str, Any], validate, 
     history = list(messages)
     last_error = ""
     for attempt in range(1, MAX_JSON_RETRIES + 2):
-        text = chat(history, schema=schema, num_predict=num_predict, model=model)
+        text = chat(history, schema=schema, num_predict=num_predict, model=model, timeout=timeout)
         try:
             return validate(parse_json_object(text)), attempt
         except ValueError as exc:

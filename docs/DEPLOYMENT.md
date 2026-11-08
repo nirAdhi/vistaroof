@@ -52,6 +52,7 @@ LLM_FALLBACK=                                # second reader when the first is u
 OLLAMA_BASE_URL=http://192.168.0.183:11434   # must be reachable from the app container; never expose it publicly
 OLLAMA_MODEL=qwen2.5:3b                      # ollama pull qwen2.5:3b on that machine
 # OLLAMA_VISION_MODEL=qwen3-vl:2b            # optional: photos / scanned PDFs read on the Ollama PC too (ollama pull qwen3-vl:2b)
+# OLLAMA_VISION_TIMEOUT=300                  # seconds per photo / scan; a slower file is skipped (enter it by hand), the run continues
 # GEMINI_API_KEY=                            # or paste it in Admin; use a project with billing enabled (see docs/SECURITY.md)
 # GEMINI_MODEL=auto                          # newest Flash model the key can use (Google retires names for new accounts)
 ```

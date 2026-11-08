@@ -132,7 +132,7 @@ def test_local_vision_model_reads_photos_and_scans(monkeypatch, fresh_db):
     imgs = fake.requests[-1]["messages"][1]["images"]
     assert model == "ollama/qwen3-vl:2b" and len(imgs) == 1
     sent = Image.open(io.BytesIO(__import__("base64").b64decode(imgs[0])))
-    assert max(sent.size) == extract.VISION_MAX_SIDE and sent.format == "JPEG"
+    assert max(sent.size) == extract._vision_max_side() == 1280 and sent.format == "JPEG"
     # text documents still go to the text model, without images
     fields, model = extract.extract(_meta("INV-1.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
     assert model == "ollama/qwen2.5:3b" and fake.requests[-1]["model"] == "qwen2.5:3b" and "images" not in fake.requests[-1]["messages"][1]
@@ -245,6 +245,94 @@ def test_unreachable_and_missing_model_stop_the_sync_with_one_message(monkeypatc
     monkeypatch.setattr(config, "OLLAMA_MODEL", "gemma:2b")
     with pytest.raises(ollama.ModelMissing, match="ollama pull gemma:2b"):
         extract.extract(_meta("a.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+
+
+def test_a_slow_file_is_skipped_not_an_outage(monkeypatch, fresh_db):
+    """ReadTimeout while the server still answers a probe = this file is too slow for the model: a
+    ValueError (skipped), never Unreachable (which would stop the run and retry it every sync)."""
+    fake = FakeOllama(models=("qwen2.5:3b", "qwen3-vl:2b"))
+    install_fake_ollama(monkeypatch, fake)
+    monkeypatch.setattr(config, "OLLAMA_VISION_MODEL", "qwen3-vl:2b")
+    fake.slow_models.add("qwen3-vl:2b")
+    with pytest.raises(ollama.TooSlow, match=r"reader too slow: Ollama model qwen3-vl:2b did not finish this file within 300 s") as info:
+        extract.extract(_meta("handwritten.jpg", "image/jpeg"), FileContent(mime="image/jpeg", data=jpeg_bytes()))
+    assert isinstance(info.value, ValueError) and not isinstance(info.value, extract.ApiUnavailable)
+    assert fake.timeouts[-1] == config.OLLAMA_VISION_TIMEOUT == 300  # photos get the longer vision timeout
+    # text documents keep the normal timeout and still work
+    fields, _ = extract.extract(_meta("INV-1.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+    assert fields["doc_type"] == "sales_invoice" and fake.timeouts[-1] == config.OLLAMA_TIMEOUT
+    # the same timeout when nothing answers at all is a real outage
+    fake.hang = True
+    with pytest.raises(ollama.Unreachable, match="ReadTimeout"):
+        extract.extract(_meta("INV-2.txt", "text/plain"), FileContent(mime="text/plain", text=INVOICE_TEXT))
+
+
+def test_slow_photos_are_skipped_and_the_sync_carries_on(admin, fresh_db, monkeypatch, tmp_path):
+    fake = FakeOllama(models=("qwen2.5:3b", "qwen3-vl:2b"))
+    install_fake_ollama(monkeypatch, fake)
+    settings.set_value("anthropic_api_key", "")
+    monkeypatch.setattr(config, "OLLAMA_VISION_MODEL", "qwen3-vl:2b")
+    fake.slow_models.add("qwen3-vl:2b")
+    folder = tmp_path / "Docs"
+    folder.mkdir()
+    (folder / "handwritten.jpg").write_bytes(jpeg_bytes())
+    (folder / "INV-1.txt").write_text(INVOICE_TEXT, encoding="utf-8")
+    src = admin.post("/api/admin/sources", json={"kind": "local", "name": "Docs", "local_folder": str(folder)}).json()
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    docs = {d["name"]: d for d in admin.get("/api/documents?limit=100").json()}
+    assert docs["INV-1.txt"]["status"] == "done"
+    assert docs["handwritten.jpg"]["status"] == "skipped" and docs["handwritten.jpg"]["error"].startswith("reader too slow")
+    st = sync.status()
+    assert st["stop_reason"] is None and st["errors"] == 0  # the run was not aborted
+    assert admin.get("/api/admin/sources").json()[0]["last_status"] == "ok"
+    n = len(fake.requests)
+    # the next sync does not try the slow photo again (a run must not lose minutes to it every time)
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    assert len(fake.requests) == n
+    # the owner can still enter it by hand ...
+    r = admin.patch(f"/api/documents/{docs['handwritten.jpg']['id']}", json={"doc_type": "receipt", "total": 40})
+    assert r.status_code == 200 and r.json()["status"] == "done" and r.json()["model"] == "manual"
+
+
+def test_slow_photo_goes_to_the_fallback_reader(monkeypatch, fresh_db, fake_claude):
+    fake = FakeOllama(models=("qwen2.5:3b", "qwen3-vl:2b"))
+    install_fake_ollama(monkeypatch, fake)
+    monkeypatch.setattr(config, "OLLAMA_VISION_MODEL", "qwen3-vl:2b")
+    settings.set_value("llm_fallback", "claude")
+    fake.slow_models.add("qwen3-vl:2b")
+    fields, model = extract.extract(_meta("handwritten.jpg", "image/jpeg"), FileContent(mime="image/jpeg", data=jpeg_bytes()))
+    assert model == "fake-model" and len(fake_claude.calls) == 1
+
+
+def test_a_failing_file_is_retried_three_times_then_left_alone(admin, fresh_db, monkeypatch, tmp_path, fake_claude):
+    settings.set_value("llm_provider", "claude")
+    folder = tmp_path / "Docs"
+    folder.mkdir()
+    (folder / "INV-9 Murphy.pdf").write_bytes(b"%PDF-1.4 invoice")
+    (folder / "INV-1.txt").write_text(INVOICE_TEXT, encoding="utf-8")
+    fake_claude.fail_for.add("INV-9 Murphy.pdf")
+    src = admin.post("/api/admin/sources", json={"kind": "local", "name": "Docs", "local_folder": str(folder)}).json()
+    for i in range(1, 6):
+        admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+        d = {x["name"]: x for x in admin.get("/api/documents?limit=100").json()}["INV-9 Murphy.pdf"]
+        assert d["status"] == "error"
+        if i >= 3:
+            assert "gave up after 3 attempts" in d["error"]
+    bad_calls = [c for c in fake_claude.calls if "INV-9" in json.dumps(c, default=str)]
+    assert len(bad_calls) == 3  # attempts 1-3, then the sync left it alone (runs 4 and 5 did not call the model)
+    # Re-read (explicit) and a hand entry still work on it
+    fake_claude.fail_for.clear()
+    r = admin.post(f"/api/documents/{d['id']}/reprocess")
+    assert r.status_code == 200 and r.json()["status"] == "done" and r.json()["attempts"] == 0
+
+
+def test_rows_left_processing_by_a_restart_go_back_to_pending(fresh_db):
+    from app import db
+    doc_id = db.upsert_file_metadata({"source": "local", "source_ref": 1, "source_id": "x:1", "name": "a.pdf", "mime": "application/pdf",
+                                      "folder": "", "web_link": "", "size": 1, "modified_at": "2026-03-04T00:00:00+00:00"})
+    db.set_status(doc_id, "processing")
+    assert db.reset_stuck_processing() == 1 and db.get_document(doc_id)["status"] == "pending"
+    assert db.reset_stuck_processing() == 0
 
 
 def test_malformed_json_is_retried_at_most_twice(monkeypatch, fresh_db):

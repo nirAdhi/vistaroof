@@ -35,6 +35,9 @@ class FakeOllama:
         self.requests: list[dict] = []
         self.answers: list = []
         self.down = False
+        self.slow_models: set[str] = set()  # /api/chat with one of these never answers in time (httpx.ReadTimeout)
+        self.hang = False                   # nothing answers in time, not even /api/version (network black hole)
+        self.timeouts: list[float] = []     # the timeout each /api/chat was sent with
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -51,7 +54,13 @@ class FakeOllama:
     def handle(self, request: httpx.Request) -> httpx.Response:
         if self.down:
             raise httpx.ConnectError("connection refused", request=request)
+        if self.hang:
+            raise httpx.ReadTimeout("timed out", request=request)
         path = request.url.path
+        if path == "/api/chat":
+            self.timeouts.append(request.extensions.get("timeout", {}).get("read"))
+            if json.loads(request.content).get("model") in self.slow_models:
+                raise httpx.ReadTimeout("timed out", request=request)
         if path == "/api/version":
             return httpx.Response(200, json={"version": self.version})
         if path == "/api/tags":
@@ -76,7 +85,8 @@ def install_fake_ollama(monkeypatch, fake: FakeOllama) -> None:
     """Switch the provider to Ollama (as Admin would) and route app/ollama.py through the fake."""
     settings.set_value("llm_provider", "ollama")
     monkeypatch.setattr(ollama, "build_http_client",
-                        lambda timeout=None: httpx.Client(base_url=config.OLLAMA_BASE_URL, transport=fake.transport(), timeout=5))
+                        lambda timeout=None: httpx.Client(base_url=config.OLLAMA_BASE_URL, transport=fake.transport(),
+                                                          timeout=httpx.Timeout(timeout if timeout is not None else config.OLLAMA_TIMEOUT, connect=5)))
 
 
 def pdf_with_text(text: str) -> bytes:

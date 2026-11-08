@@ -18,6 +18,7 @@ python-multipart==0.0.32
 cryptography==50.0.2
 httpx==0.28.1            # Microsoft Graph client (app/microsoft.py) and the Ollama client (app/ollama.py)
 pypdf==7.0.0             # PDF text layer for text-only models (app/textract.py)
+defusedxml==0.7.1        # safe parsing of content.xml inside .odt/.ods files (app/textract.py)
 
 # test / audit tooling (not needed at runtime)
 pytest==9.1.1

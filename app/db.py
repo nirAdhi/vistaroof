@@ -152,7 +152,7 @@ _MIGRATIONS = {
     "sources": [("drive_page_token", "TEXT"), ("last_change_check", "TEXT"),
                 # Microsoft 365 sources: the pasted link, its resolved location (JSON), tenant override, upload flag
                 ("ms_link", "TEXT"), ("ms_location", "TEXT"), ("ms_tenant", "TEXT"), ("ms_upload", "INTEGER DEFAULT 1")],
-    "documents": [("uploaded_by", "TEXT")],
+    "documents": [("uploaded_by", "TEXT"), ("attempts", "INTEGER NOT NULL DEFAULT 0")],
     "sync_runs": [("source_ref", "INTEGER"), ("source_name", "TEXT"), ("force", "INTEGER DEFAULT 0"), ("message", "TEXT"),
                   ("removed", "INTEGER DEFAULT 0"), ("trigger", "TEXT")],
 }
@@ -427,7 +427,7 @@ def needs_processing(doc_id: int, force: bool = False, retry_prefix: str | tuple
         retry_prefix = (retry_prefix,)
     with connect() as conn:
         row = conn.execute(
-            "SELECT status, error, modified_at, processed_modified_at, overridden FROM documents WHERE id=?", (doc_id,)
+            "SELECT status, error, modified_at, processed_modified_at, overridden, attempts FROM documents WHERE id=?", (doc_id,)
         ).fetchone()
     if row is None:
         return False
@@ -439,12 +439,39 @@ def needs_processing(doc_id: int, force: bool = False, retry_prefix: str | tuple
         return True
     if row["status"] in ("done", "skipped") and row["processed_modified_at"] == row["modified_at"]:
         return False
+    if row["status"] == "error" and (row["attempts"] or 0) >= MAX_ATTEMPTS and row["processed_modified_at"] == row["modified_at"]:
+        return False  # tried enough: rests as an error until the file changes, a Full re-read, Re-read or a hand entry
     return True
+
+
+MAX_ATTEMPTS = 3  # automatic reads of a failing file before the sync leaves it alone
 
 
 def set_status(doc_id: int, status: str, error: str | None = None) -> None:
     with connect() as conn:
         conn.execute("UPDATE documents SET status=?, error=? WHERE id=?", (status, error, doc_id))
+
+
+def mark_error(doc_id: int, message: str) -> int:
+    """Record a failed read and count the attempt. From MAX_ATTEMPTS on the message says the sync has given up on
+    it (until the file changes or someone acts on it) so the same file cannot cost every run minutes. Returns attempts."""
+    with connect() as conn:
+        attempts = (conn.execute("SELECT attempts FROM documents WHERE id=?", (doc_id,)).fetchone() or {"attempts": 0})["attempts"] or 0
+        attempts += 1
+        if attempts >= MAX_ATTEMPTS:
+            message = f"{message[:380]} — gave up after {attempts} attempts; enter the figures by hand or use Re-read"
+        conn.execute(
+            "UPDATE documents SET status='error', error=?, attempts=?, processed_at=?, processed_modified_at=modified_at WHERE id=?",
+            (message[:500], attempts, now_iso(), doc_id),
+        )
+    return attempts
+
+
+def reset_stuck_processing() -> int:
+    """At start-up: rows left 'processing' by a restart mid-sync go back to pending (the next sync reads them)."""
+    with connect() as conn:
+        n = conn.execute("UPDATE documents SET status='pending' WHERE status='processing'").rowcount
+    return n
 
 
 def mark_skipped(doc_id: int, reason: str) -> None:
@@ -460,7 +487,7 @@ def save_extraction(doc_id: int, fields: dict[str, Any], model: str) -> None:
     with connect() as conn:
         conn.execute(
             """UPDATE documents SET
-                status='done', error=NULL, processed_at=?, processed_modified_at=modified_at, model=?,
+                status='done', error=NULL, attempts=0, processed_at=?, processed_modified_at=modified_at, model=?,
                 doc_type=?, direction=?, treatment=?, sign=?, counterparty=?, counterparty_role=?,
                 document_number=?, issue_date=?, due_date=?, currency=?, subtotal=?, vat_amount=?, total=?,
                 net_amount=?, amount_paid=?, payment_status=?, category=?, project=?, summary=?, confidence=?,
@@ -519,7 +546,7 @@ def update_document(doc_id: int, patch: dict[str, Any], derived: dict[str, Any])
 def reset_document(doc_id: int) -> None:
     """Forget the hand edit and the last read so the next sync / re-read processes the file again."""
     with connect() as conn:
-        conn.execute("UPDATE documents SET status='pending', overridden=0, processed_modified_at=NULL WHERE id=?", (doc_id,))
+        conn.execute("UPDATE documents SET status='pending', overridden=0, attempts=0, processed_modified_at=NULL WHERE id=?", (doc_id,))
 
 
 def undated_documents_with_raw() -> list[dict[str, Any]]:

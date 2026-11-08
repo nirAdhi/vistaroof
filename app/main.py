@@ -74,6 +74,9 @@ async def _lifespan(_app: FastAPI):
             log.warning("APP_SECRET_KEY is not set: secrets are stored unencrypted. Set it before going live.")
     else:
         log.info("PUBLIC_BASE_URL not set: running in local mode (cookies not marked Secure).")
+    stuck = db.reset_stuck_processing()  # a restart mid-sync leaves rows 'processing'; they are simply read again
+    if stuck:
+        log.info("%d document(s) were left 'processing' by the last shutdown; back to pending", stuck)
     sync.start_scheduler()
     llm.refresh_in_background()  # populate the "document reader" status without delaying start-up
     repair.run_in_background()  # dates a stricter parser once rejected are recovered from the stored answers

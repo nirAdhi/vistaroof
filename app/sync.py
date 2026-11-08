@@ -272,9 +272,9 @@ def _process_one(source, meta: FileMeta, force: bool, retry_prefix: str | tuple[
         return "error"
     except Exception as exc:
         msg = f"{type(exc).__name__}: {str(exc)[:400]}"
-        db.set_status(doc_id, "error", msg)
+        attempts = db.mark_error(doc_id, msg)  # counted: after MAX_ATTEMPTS the sync stops retrying this file
         _note_error(meta.name, msg)
-        log.warning("failed to read %s: %s", meta.name, msg)
+        log.warning("failed to read %s (attempt %d): %s", meta.name, attempts, msg)
         return "error"
 
 
@@ -303,7 +303,7 @@ def reprocess(doc_id: int, provider: str | None = None) -> dict[str, Any]:
     except ValueError as exc:
         db.mark_skipped(doc_id, str(exc))
     except Exception as exc:
-        db.set_status(doc_id, "error", f"{type(exc).__name__}: {str(exc)[:400]}")
+        db.mark_error(doc_id, f"{type(exc).__name__}: {str(exc)[:400]}")
         raise
     return db.get_document(doc_id) or {}
 

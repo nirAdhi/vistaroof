@@ -607,8 +607,12 @@ def small_text_budget() -> int:
     return max(4000, (max(config.OLLAMA_NUM_CTX, 8192) - SMALL_PROMPT_RESERVE_TOKENS) * CHARS_PER_TOKEN)
 
 
-VISION_MAX_SIDE = 1600   # px; a 4 GB GPU (GTX 1650) must not be handed phone-sized photos
 VISION_MAX_PAGES = 2     # scanned PDF pages sent to the local vision model
+
+
+def _vision_max_side() -> int:
+    """px; a 4 GB GPU (GTX 1650) must not be handed phone-sized photos (OLLAMA_VISION_MAX_SIDE, default 1280)."""
+    return max(640, config.OLLAMA_VISION_MAX_SIDE)
 
 
 def _vision_jpeg(img) -> str:
@@ -616,7 +620,8 @@ def _vision_jpeg(img) -> str:
     from PIL import ImageOps
 
     img = ImageOps.exif_transpose(img)
-    img.thumbnail((VISION_MAX_SIDE, VISION_MAX_SIDE))
+    side = _vision_max_side()
+    img.thumbnail((side, side))
     if img.mode != "RGB":
         img = img.convert("RGB")
     buf = io.BytesIO()
@@ -654,7 +659,8 @@ def _extract_ollama_vision(meta: FileMeta, content: FileContent) -> tuple[dict[s
         {"role": "system", "content": build_vision_prompt()},
         {"role": "user", "content": f"File name: {meta.name}\nFolder: {meta.folder}\n\nRead the attached document image(s) and return the JSON object.", "images": imgs},
     ]
-    obj, attempts = ollama.chat_json(messages, SMALL_SCHEMA, _validate_small, num_predict=700, model=config.OLLAMA_VISION_MODEL)
+    obj, attempts = ollama.chat_json(messages, SMALL_SCHEMA, _validate_small, num_predict=700, model=config.OLLAMA_VISION_MODEL,
+                                     timeout=config.OLLAMA_VISION_TIMEOUT)
     mapped = _small_to_fields(obj, False)
     mapped["flags"] = ["local_vision_model"]
     fields = derive(mapped)
@@ -728,6 +734,11 @@ def extract(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
     fb = fallback_for(primary)
     try:
         return EXTRACTORS[primary](meta, content)
+    except ollama.TooSlow as exc:  # the Ollama PC is alive but this file defeats it: fallback reader if any, else skipped
+        if fb:
+            log.warning("%s: %s — handing it to %s (fallback reader)", meta.name, exc, fb)
+            return _with_fallback(fb, meta, content)
+        raise
     except textract.NeedsVision as exc:
         if fb:
             log.info("%s: %s — handing it to %s (fallback reader)", meta.name, exc, fb)

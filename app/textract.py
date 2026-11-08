@@ -37,13 +37,15 @@ _ODF_TABLE = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}"
 def odf_to_text(data: bytes, spreadsheet: bool) -> str:
     """OpenDocument (.odt / .ods, LibreOffice) → text. The file is a zip; ``content.xml`` holds the body.
     Writer: paragraphs and headings in order. Calc: one line per row, cells joined with " | "."""
-    import xml.etree.ElementTree as ET
     import zipfile
+    from xml.etree.ElementTree import ParseError
+
+    from defusedxml import ElementTree as ET  # the XML comes from an untrusted file: no entity expansion / external entities
 
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             root = ET.fromstring(z.read("content.xml"))
-    except (zipfile.BadZipFile, KeyError, ET.ParseError) as exc:
+    except (zipfile.BadZipFile, KeyError, ParseError, ValueError) as exc:  # defusedxml raises ValueError subclasses for forbidden constructs
         raise ValueError(f"could not read OpenDocument file ({type(exc).__name__})") from exc
     parts: list[str] = []
     if spreadsheet:
