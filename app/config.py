@@ -21,6 +21,8 @@ LOG_DIR           Folder for rotating log files (default ``<DATA_DIR>/logs``).
 BACKUP_DIR        Initial backup folder (Admin → Data can change it), e.g. a mounted USB drive.
 BACKUP_ROOTS      Optional ``;``-separated list confining where backups may be written.
 BACKUP_EVERY_HOURS / BACKUP_KEEP   Automatic application backups (0 = off) and how many to keep.
+SMTP_HOST / SMTP_PORT / SMTP_SECURITY / SMTP_USER / SMTP_PASSWORD / SMTP_FROM / ALERT_TO
+                  Initial email-alert settings (Admin → Alerts); the password is stored encrypted.
 ADMIN_PASSWORD    Built-in admin password, applied at every start (10+ characters). When set, the
                   first-run "create the admin password" screen is skipped and the password cannot be
                   changed from the UI: edit the file and restart instead.
@@ -102,6 +104,15 @@ ENV_DEFAULTS = {
     "llm_fallback": LLM_FALLBACK,                 # "" | claude | gemini | ollama
     "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
     "gemini_model": GEMINI_MODEL,
+    # Email alerts (Admin → Alerts): reader down / back, sync stopped by a reader failure.
+    "smtp_host": os.getenv("SMTP_HOST", ""),
+    "smtp_port": os.getenv("SMTP_PORT", "587"),
+    "smtp_security": os.getenv("SMTP_SECURITY", "starttls"),  # starttls | ssl | none
+    "smtp_user": os.getenv("SMTP_USER", ""),
+    "smtp_password": os.getenv("SMTP_PASSWORD", ""),
+    "smtp_from": os.getenv("SMTP_FROM", ""),
+    "alert_to": os.getenv("ALERT_TO", ""),
+    "alerts_enabled": os.getenv("ALERTS_ENABLED", "1"),
     "backup_dir": os.getenv("BACKUP_DIR", ""),            # e.g. a mounted USB drive; empty = <DATA_DIR>/backups
     "backup_every_hours": os.getenv("BACKUP_EVERY_HOURS", "0"),
     "backup_keep": os.getenv("BACKUP_KEEP", "10"),

@@ -49,13 +49,14 @@ from typing import Any
 
 from . import config, crypto, db
 
-SECRET_KEYS = {"anthropic_api_key", "gemini_api_key", "google_client_config", "ms_client_config", "admin_password_hash", "session_secret"}
+SECRET_KEYS = {"anthropic_api_key", "gemini_api_key", "smtp_password", "google_client_config", "ms_client_config", "admin_password_hash", "session_secret"}
 PUBLIC_KEYS = [
     "company_name", "company_address", "company_vat", "base_currency", "country", "extract_model", "extract_effort",
     "ask_model", "concurrency", "max_file_mb", "auto_sync_minutes", "cache_previews", "gemini_model",
     "backup_dir", "backup_every_hours", "backup_keep",
+    "smtp_host", "smtp_port", "smtp_security", "smtp_user", "smtp_from", "alert_to", "alerts_enabled",
 ]
-ENCRYPTED_KEYS = {"anthropic_api_key", "gemini_api_key", "google_client_config", "ms_client_config"}  # password hashes and the HMAC secret are not secrets of value
+ENCRYPTED_KEYS = {"anthropic_api_key", "gemini_api_key", "smtp_password", "google_client_config", "ms_client_config"}  # password hashes and the HMAC secret are not secrets of value
 API_KEY_SETTINGS = ("anthropic_api_key", "gemini_api_key")
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14  # 14 days
 MIN_PASSWORD_LENGTH = 10
@@ -220,6 +221,7 @@ def public() -> dict[str, Any]:
     out["has_api_key"] = has_api_key()
     out["gemini_api_key_masked"] = masked_key("gemini_api_key")
     out["has_gemini_key"] = has_gemini_key()
+    out["has_smtp_password"] = bool(get("smtp_password"))
     out.update(llm_public())
     cfg = google_client_config()
     out["has_google_client"] = cfg is not None

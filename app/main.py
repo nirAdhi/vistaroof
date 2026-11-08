@@ -52,7 +52,7 @@ from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import analytics, ask, backup, config, db, demo, extract, gemini, llm, logsetup, microsoft, previews, repair, settings, sources, sync
+from . import analytics, ask, backup, config, db, demo, extract, gemini, llm, logsetup, microsoft, notify, previews, repair, settings, sources, sync
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -714,7 +714,7 @@ def admin_overview() -> dict[str, Any]:
     return {"settings": pub, "sources": srcs, "sync": sync.status(), "counts": db.status_counts(),
             "demo_loaded": demo.count() > 0, "models": [{"id": m, "label": l} for m, l in extract.MODELS],
             "gemini_models": [{"id": m, "label": l} for m, l in gemini.SUGGESTED_MODELS],
-            "production": config.IS_PRODUCTION, "users": db.list_users(), "previews": previews.stats()}
+            "production": config.IS_PRODUCTION, "users": db.list_users(), "previews": previews.stats(), "alerts": notify.status()}
 
 
 @app.post("/api/admin/previews/clear", dependencies=[Depends(require_admin)])
@@ -746,6 +746,14 @@ class SettingsPatch(BaseModel):
     gemini_api_key: str | None = Field(None, max_length=300)
     gemini_model: str | None = Field(None, max_length=80)
     cache_previews: bool | None = None  # keep viewable copies of files on the server (default off)
+    smtp_host: str | None = Field(None, max_length=200)
+    smtp_port: int | None = Field(None, ge=1, le=65535)
+    smtp_security: str | None = Field(None, max_length=10)  # starttls | ssl | none
+    smtp_user: str | None = Field(None, max_length=200)
+    smtp_password: str | None = Field(None, max_length=300)
+    smtp_from: str | None = Field(None, max_length=200)
+    alert_to: str | None = Field(None, max_length=500)  # comma-separated
+    alerts_enabled: bool | None = None
     backup_dir: str | None = Field(None, max_length=500)  # folder for backups ("" = <DATA_DIR>/backups)
     backup_every_hours: int | None = Field(None, ge=0, le=720)
     backup_keep: int | None = Field(None, ge=1, le=100)
@@ -765,6 +773,22 @@ def admin_update_settings(body: SettingsPatch) -> dict[str, Any]:
         if key and not settings.looks_like_key(key):
             raise HTTPException(400, "that does not look like a Claude API key")
         changes["anthropic_api_key"] = key
+    if "smtp_security" in changes and changes["smtp_security"] not in ("starttls", "ssl", "none"):
+        raise HTTPException(400, "security must be starttls, ssl or none")
+    for k in ("smtp_host", "smtp_user", "smtp_from", "alert_to"):
+        if k in changes:
+            changes[k] = (changes[k] or "").strip()
+    if "smtp_from" in changes and changes["smtp_from"] and not _EMAIL_RE.match(changes["smtp_from"]):
+        raise HTTPException(400, "the sender must be an email address")
+    if "alert_to" in changes and changes["alert_to"]:
+        addrs = [a.strip() for a in changes["alert_to"].replace(";", ",").split(",") if a.strip()]
+        if not addrs or not all(_EMAIL_RE.match(a) for a in addrs):
+            raise HTTPException(400, "recipients: one or more email addresses separated by commas")
+        changes["alert_to"] = ", ".join(addrs)
+    if "smtp_password" in changes:
+        changes["smtp_password"] = changes["smtp_password"] or ""
+    if "alerts_enabled" in changes:
+        changes["alerts_enabled"] = "1" if changes["alerts_enabled"] else "0"
     if "backup_dir" in changes:
         folder = (changes["backup_dir"] or "").strip()
         if folder:
@@ -838,6 +862,18 @@ def admin_test_key(body: KeyTest) -> dict[str, Any]:
     if not settings.looks_like_key(key):
         return {"ok": False, "message": "No key to test."}
     return extract.test_api_key(key, body.model or None)
+
+
+@app.post("/api/admin/alerts/test", dependencies=[Depends(require_admin)])
+def admin_alert_test() -> dict[str, Any]:
+    """Send a test email with the saved SMTP settings (synchronous, so the error text comes back)."""
+    try:
+        notify.send_test()
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(400, f"could not send: {type(exc).__name__}: {str(exc)[:300]}")
+    return {"ok": True, "message": f"Test email sent to {', '.join(notify.recipients())}", "alerts": notify.status()}
 
 
 @app.post("/api/admin/llm-check", dependencies=[Depends(require_admin)])

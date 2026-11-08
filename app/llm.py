@@ -27,7 +27,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any
 
-from . import config, extract, gemini, ollama, settings
+from . import config, extract, gemini, notify, ollama, settings
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +74,10 @@ def _set(prov: str, state: str, ok: bool, message: str, **extra: Any) -> dict[st
         _status.update(new)
     if old != state:
         (log.warning if not ok else log.info)("document reader: %s → %s (%s)", old, state, message)
+        try:
+            notify.reader_changed(old, new)  # email the admin: reader down / back
+        except Exception:  # pragma: no cover - alerts must never break the status
+            log.exception("alert failed")
     return dict(new)
 
 

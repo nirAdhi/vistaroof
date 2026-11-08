@@ -64,6 +64,7 @@
     renderGoogle(o.settings);
     renderMicrosoft(o.settings);
     renderSecurity(o.settings, o.users || []);
+    renderAlerts(o.settings, o.alerts || {});
     renderLog(o.sync);
     fillForm($("#backupForm"), o.settings);
     loadBackups();
@@ -298,6 +299,34 @@
     catch (err) { toast(err.message, 6000); }
   });
   function renderCompany(s) { fillForm($("#companyForm"), s); }
+
+  // ------------------------------------------------------------ alerts (email)
+  function renderAlerts(s, a) {
+    fillForm($("#alertsForm"), s);
+    $('#alertsForm [name="alerts_enabled"]').checked = String(s.alerts_enabled) !== "0";
+    $('#alertsForm [name="smtp_password"]').placeholder = s.has_smtp_password ? "Saved — type a new one to replace" : "app password";
+    $("#smtpPasswordStatus").textContent = s.has_smtp_password ? "A password is saved (encrypted)." : "";
+    const on = String(s.alerts_enabled) !== "0";
+    $("#alertsStatus").innerHTML = `<ul class="setup-steps" style="list-style:none;padding:0">
+      <li class="${a.configured ? "ok" : "missing"}">${a.configured ? `Alerts go to ${esc((a.recipients || []).join(", "))}` : "Not configured yet — fill in the mail server and a recipient below"}</li>
+      <li class="${on ? "ok" : "missing"}">${on ? "Alerts are switched on" : "Alerts are switched off"}</li>
+      <li class="${a.last_error ? "missing" : "ok"}">${a.last_error ? `Last attempt failed: ${esc(a.last_error)}` : a.last_sent_at ? `Last sent ${when(a.last_sent_at)}: ${esc(a.last_subject || "")} (${a.sent_count} so far)` : "Nothing sent yet"}</li></ul>`;
+  }
+  $("#showSmtpBtn").addEventListener("click", () => { const i = $('#alertsForm [name="smtp_password"]'); i.type = i.type === "password" ? "text" : "password"; $("#showSmtpBtn").textContent = i.type === "password" ? "Show" : "Hide"; });
+  $("#alertsForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target); const body = {};
+    for (const [k, v] of fd.entries()) { if (k === "smtp_password" && !v) continue; body[k] = k === "smtp_port" ? parseInt(v || "587", 10) : v; }
+    body.alerts_enabled = $('#alertsForm [name="alerts_enabled"]').checked;
+    try { await api("/api/admin/settings", { method: "PUT", body: JSON.stringify(body) }); $('#alertsForm [name="smtp_password"]').value = ""; $("#alertsSaved").textContent = "Saved"; await load(); setTimeout(() => ($("#alertsSaved").textContent = ""), 2500); }
+    catch (err) { toast(err.message, 7000); }
+  });
+  $("#alertTestBtn").addEventListener("click", async () => {
+    const btn = $("#alertTestBtn"); btn.disabled = true; btn.textContent = "Sending…";
+    try { const r = await api("/api/admin/alerts/test", { method: "POST" }); toast(r.message, 6000); await load(); }
+    catch (err) { toast(err.message, 9000); }
+    btn.disabled = false; btn.textContent = "Send test email";
+  });
   $("#companyForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(e.target).entries());

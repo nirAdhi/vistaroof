@@ -46,6 +46,7 @@
     <button data-sec="microsoft">Microsoft setup</button>
     <button data-sec="log">Sync log</button>
     <button data-sec="data">Data</button>
+    <button data-sec="alerts">Alerts</button>
     <button data-sec="security">Users &amp; security</button>
   </nav>
 
@@ -259,6 +260,28 @@
           <p class="muted small">Deletes every extracted document and the sync history. Sources and settings are kept; the next sync re-reads everything (and costs API usage).</p>
           <div class="actions"><button class="btn" id="clearDocs">Delete all documents</button></div>
         </div>
+      </div>
+    </section>
+
+    <!-- ===== ALERTS ===== -->
+    <section class="sec" id="sec-alerts">
+      <div class="sec-head"><h2>Alerts</h2><div class="muted">An email when the document reader goes down or comes back (for example the Ollama PC switched off), and when a sync is stopped because a reader could not be used. The dashboard and every figure already read keep working meanwhile; the alert is so you know new documents are waiting.</div></div>
+      <div class="card" id="alertsStatus"></div>
+      <div class="card">
+        <form id="alertsForm" class="form">
+          <label class="check"><input type="checkbox" name="alerts_enabled"> Send alerts by email</label>
+          <div class="grid two">
+            <label>Mail server (SMTP host) <input name="smtp_host" placeholder="smtp.office365.com" maxlength="200"></label>
+            <label>Port <input name="smtp_port" type="number" min="1" max="65535" placeholder="587"></label>
+            <label>Security <select name="smtp_security"><option value="starttls">STARTTLS (port 587, most providers)</option><option value="ssl">SSL/TLS (port 465)</option><option value="none">None (local relay only)</option></select></label>
+            <label>Username <input name="smtp_user" placeholder="alerts@yourcompany.ie" maxlength="200" autocomplete="off"></label>
+            <label>Password <div class="inline"><input name="smtp_password" type="password" placeholder="app password" autocomplete="off"><button class="btn" type="button" id="showSmtpBtn">Show</button></div><div class="small muted" id="smtpPasswordStatus"></div></label>
+            <label>Sender address (From) <input name="smtp_from" placeholder="ledger@yourcompany.ie" maxlength="200"></label>
+            <label>Send alerts to (comma-separated) <input name="alert_to" placeholder="you@yourcompany.ie, cormac@vistaroofing.ie" maxlength="500"></label>
+          </div>
+          <div class="actions"><button class="btn primary" type="submit">Save</button><button class="btn" type="button" id="alertTestBtn">Send test email</button><span class="muted small" id="alertsSaved"></span></div>
+        </form>
+        <p class="muted small" style="margin:10px 0 0">Microsoft 365: smtp.office365.com, port 587, STARTTLS, your mailbox as username with an app password (SMTP AUTH must be enabled for the mailbox). Gmail: smtp.gmail.com, 587, STARTTLS, an app password. The same alert is not repeated within an hour; a recovery is always sent.</p>
       </div>
     </section>
 

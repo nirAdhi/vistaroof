@@ -238,7 +238,8 @@ def fresh_db():
         conn.execute("DELETE FROM sync_runs")
         conn.execute("DELETE FROM users")
         conn.execute("DELETE FROM settings WHERE key IN ('anthropic_api_key', 'gemini_api_key', 'gemini_model', 'google_client_config', "
-                     "'ms_client_config', 'llm_provider', 'llm_fallback', 'backup_dir', 'backup_every_hours', 'backup_keep')")
+                     "'ms_client_config', 'llm_provider', 'llm_fallback', 'backup_dir', 'backup_every_hours', 'backup_keep', "
+                     "'smtp_host', 'smtp_port', 'smtp_security', 'smtp_user', 'smtp_password', 'smtp_from', 'alert_to', 'alerts_enabled')")
     settings.invalidate()
 
 

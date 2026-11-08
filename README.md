@@ -51,6 +51,19 @@ folder and costs no GPU or API usage; only a new or modified file is downloaded 
 dashboard notices new figures within 20 s and refreshes itself. "Full re-read" re-reads everything
 and is only for when the reader or its prompt changed.
 
+## When the reader is off (and email alerts)
+
+Every figure lives in the app's own database, so the dashboard, documents, companies, previews and
+hand edits keep working when the document reader is unreachable — the Ollama PC switched off, a
+Claude or Gemini key out of credit. Only *reading new files* pauses: new documents wait as *pending*
+and the next change check reads them once the reader is back; nothing has to be re-synced.
+
+Admin → Alerts sends an email (SMTP: Microsoft 365, Gmail or any mail server; the password is stored
+encrypted) when the reader goes down or comes back and when a sync is stopped because a reader
+could not be used. The same alert is not repeated within an hour; a recovery is always sent; "Send
+test email" checks the settings. Initial values: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`,
+`SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_TO` in `.env`.
+
 ## Backups (Admin → Data → Backups)
 
 Two kinds, written to a folder on the server — point it at a mounted USB / external drive — and
@@ -125,7 +138,7 @@ docker compose up -d --build
 ## Development
 
 ```
-.venv\Scripts\python -m pytest tests        # 91 tests, no network (fake Claude, fake Ollama, fake Gemini, fake Drive, fake Graph)
+.venv\Scripts\python -m pytest tests        # 96 tests, no network (fake Claude, fake Ollama, fake Gemini, fake Drive, fake Graph, fake SMTP)
 .venv\Scripts\python -m pip_audit           # dependency vulnerabilities
 .venv\Scripts\python -m bandit -r app -ll   # static analysis
 ```
@@ -146,6 +159,7 @@ app/
   textract.py    plain-text extraction (PDF text layer, Excel, Word) for text-only models
   llm.py         provider façade (ready? health?) + llm_check.py command line; errors.py shared ApiUnavailable
   backup.py      application / full backups to a folder (USB drive), zip downloads, retention, schedule; repair.py date repair
+  notify.py      email alerts over SMTP (reader down / back, sync stopped by a reader failure)
   analytics.py   dashboard aggregates and company directory
   ask.py         natural-language questions
   previews.py    cached viewable copies of files; render_demo.py sample pages; images.py photo normalisation

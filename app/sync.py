@@ -36,7 +36,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from . import db, extract, llm, settings
+from . import db, extract, llm, notify, settings
 from .sources import SUPPORTED_MIMES, FileMeta, open_source
 
 log = logging.getLogger(__name__)
@@ -131,13 +131,17 @@ def stop() -> bool:
 
 def _abort(reason: str) -> None:
     """Stop the run because the API is unusable (bad key, no credit): same path as Stop, reason kept."""
+    first = False
     with _lock:
         if not _state["stop_requested"]:
             _state["stop_requested"] = True
             _state["stop_reason"] = reason
             _state["message"] = f"Stopping: {reason}"
             log.error("sync aborted: %s", reason)
+            first = True
         _rerun.clear()
+    if first:
+        notify.sync_aborted(reason)  # email the admin (once per hour at most)
 
 
 def _run_all(sources: list[dict[str, Any]], force: bool, trigger: str) -> None:

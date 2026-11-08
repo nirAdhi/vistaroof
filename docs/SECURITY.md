@@ -12,6 +12,7 @@ security-specific, including a router walk that proves every `/api` route needs 
 |---|---|---|
 | Company invoices, receipts, payslips (extracted figures; files only when the opt-in cache is on) | High (financial + personal data of employees/customers) | SQLite `documents`, optional preview cache, the source Drives / SharePoint |
 | Claude API key, Gemini API key | High (billable; Gemini free tier is also a data-use question, see §4) | `settings` table, encrypted with `APP_SECRET_KEY`, returned only masked |
+| SMTP password for alert emails | Medium (a mailbox) | `settings`, encrypted; never returned (only "a password is saved"). Alerts carry no document content, only the reader's state |
 | Ollama server address | Low (LAN address) | `.env` only (`OLLAMA_BASE_URL`), never settable from the UI |
 | Google OAuth refresh tokens (read access to whole Drives, create-file access) | High | `sources.token_json`, encrypted |
 | Microsoft 365 refresh tokens (read, and optionally write, every file the signed-in account can reach) | High | `sources.token_json`, encrypted; delegated scopes only, PKCE flow, scopes stored with the token |
