@@ -376,6 +376,47 @@ def test_ask_uses_ollama_and_fits_the_rows_to_its_context(admin, fresh_db, monke
     user = req["messages"][1]["content"]
     assert "<ledger_summary>" in user and "Question: What was the revenue?" in user
     assert len(user) <= (max(config.OLLAMA_NUM_CTX, 8192) - ask.ASK_RESERVE_TOKENS) * extract.CHARS_PER_TOKEN + 2000
+    # a small model gets a small prompt: compact summary, at most LOCAL_MAX_ROWS question-relevant rows, short answer
+    assert len(user) < 16000 and req["options"]["num_predict"] == ask.LOCAL_NUM_PREDICT
+    body = r.json()
+    assert body["reader"] == "ollama" and body["model"] == config.OLLAMA_MODEL and body["documents"] > 0 and "seconds" in body and "note" not in body
+
+
+def test_ask_rows_are_picked_for_the_question():
+    docs = [
+        {"id": 1, "issue_date": "2026-03-01", "doc_type": "sales_invoice", "treatment": "revenue", "counterparty": "John Murphy",
+         "document_number": "INV-14", "net_amount": 4200, "total": 4767, "payment_status": "unpaid", "project": "12 Oak Drive", "summary": "Re-roof"},
+        {"id": 2, "issue_date": "2026-03-05", "doc_type": "receipt", "treatment": "expense", "counterparty": "Chadwicks",
+         "document_number": None, "net_amount": 98.5, "total": 121.16, "payment_status": "paid", "project": None, "summary": "Battens"},
+        {"id": 3, "issue_date": "2026-02-01", "doc_type": "sales_invoice", "treatment": "revenue", "counterparty": "Kildare County Council",
+         "document_number": "INV-9", "net_amount": 9000, "total": 9900, "payment_status": "overdue", "project": "Depot roof", "summary": "Flat roof"},
+    ] + [{"id": 100 + i, "issue_date": f"2026-01-{i + 1:02d}", "doc_type": "receipt", "treatment": "expense", "counterparty": f"Shop {i}",
+          "document_number": None, "net_amount": 10, "total": 12, "payment_status": "paid", "project": None, "summary": "fuel"} for i in range(100)]
+    owed = ask.select_rows("Which customers still owe us money?", docs)
+    assert [d["id"] for d in owed[:2]] == [1, 3] and len(owed) <= ask.LOCAL_MAX_ROWS  # unpaid / overdue sales first, newest first
+    murphy = ask.select_rows("What did we invoice Murphy?", docs)
+    assert murphy[0]["id"] == 1
+    spend = ask.select_rows("Which supplier do we spend the most with?", docs)
+    assert spend[0]["treatment"] == "expense" and all(d["id"] != 1 for d in spend[:50])
+    assert sum(len(ask._doc_line(d, compact=True)) for d in spend) <= ask.LOCAL_MAX_ROW_CHARS
+
+
+def test_ask_reports_a_busy_or_slow_ollama_clearly(admin, fresh_db, monkeypatch):
+    fake = FakeOllama()
+    install_fake_ollama(monkeypatch, fake)
+    settings.set_value("anthropic_api_key", "")
+    admin.post("/api/admin/demo/load")
+    fake.slow_models.add("qwen2.5:3b")
+    monkeypatch.setattr(sync, "status", lambda: {"running": True})
+    r = admin.post("/api/ask", json={"question": "Revenue?"})
+    assert r.status_code == 504 and "did not finish" in r.json()["detail"] and "A sync is running" in r.json()["detail"]
+    fake.slow_models.clear()
+    fake.answers.append("Revenue was 1,000 EUR.")
+    body = admin.post("/api/ask", json={"question": "Revenue?"}).json()
+    assert body["answer"].startswith("Revenue") and "sync was running" in body["note"]
+    fake.down = True
+    r = admin.post("/api/ask", json={"question": "Revenue?"})
+    assert r.status_code == 503 and "not reachable" in r.json()["detail"]
 
 
 def test_sync_end_to_end_with_ollama_and_no_claude_key(admin, fresh_db, monkeypatch, tmp_path):

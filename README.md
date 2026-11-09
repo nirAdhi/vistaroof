@@ -121,6 +121,16 @@ syncs at most; after three attempts it rests as an error (with "gave up" in the 
 changes, a Full re-read, Re-read, or a hand entry. Rows left "processing" by a restart mid-sync go
 back to pending at start-up.
 
+### Ask about the books with the local model
+
+The Ask tab sends the question, the dashboard aggregates and the ledger rows to the chosen reader;
+the files themselves are never sent. With Ollama the prompt is kept small so a 3B model on a small
+GPU answers in seconds, not minutes: a trimmed summary plus at most 60 rows picked for the question
+(rows naming the customer or job asked about, unpaid invoices for "who owes us", expenses for
+"supplier", newest first). The Ollama PC answers one request at a time, so while a sync is reading
+documents a question waits behind them; the Ask tab shows a live timer and says so, and a question the
+model cannot finish in `OLLAMA_TIMEOUT` seconds is reported as such (not as an outage).
+
 ### Entering a document by hand
 
 Handwritten receipts, faint carbon copies and odd scans are often quicker to type in than to keep

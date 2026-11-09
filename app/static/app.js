@@ -991,11 +991,22 @@
   async function askQuestion() {
     const q = $("#askInput").value.trim(); if (!q) return;
     const btn = $("#askBtn"); btn.disabled = true; btn.textContent = "Thinking…";
-    $("#answer").innerHTML = `<span class="muted">Reading the ledger…</span>`;
+    const local = state.config.llm_provider === "ollama";
+    let syncing = false;
+    try { syncing = !!(await api("/api/sync/status")).running; } catch (_) { /* the question still goes out */ }
+    const t0 = Date.now();
+    // a live timer: the local model on a small GPU takes 10-60 s, and far longer while a sync keeps it busy
+    const tick = () => {
+      const s = Math.round((Date.now() - t0) / 1000);
+      $("#answer").innerHTML = `<span class="muted">Reading the ledger… ${s} s${local ? ` · asking Ollama (${esc(state.config.llm_model || "")}) on your own PC` : ""}${syncing && local ? `<br>A sync is running: the Ollama PC is reading documents at the same time and answers one request at a time, so this can take several minutes. Stop the sync (Sync &amp; setup) for instant answers.` : ""}</span>`;
+    };
+    tick(); const timer = setInterval(tick, 1000);
     try {
       const r = await api("/api/ask", { method: "POST", body: JSON.stringify({ question: q, date_from: state.range.from, date_to: state.range.to }) });
-      $("#answer").textContent = r.answer;
-    } catch (err) { $("#answer").innerHTML = `<span class="neg">${esc(err.message)}</span>`; }
+      clearInterval(timer);
+      const by = r.reader ? `${READER_NAMES[r.reader] || r.reader}${r.model ? " " + r.model : ""}` : "";
+      $("#answer").innerHTML = `${esc(r.answer)}<div class="muted small" style="margin-top:10px">Answered in ${r.seconds} s${by ? ` by ${esc(by)}` : ""} from ${r.documents} documents in the selected period.${r.note ? `<br>${esc(r.note)}` : ""}</div>`;
+    } catch (err) { clearInterval(timer); $("#answer").innerHTML = `<span class="neg">${esc(err.message)}</span>`; }
     btn.disabled = false; btn.textContent = "Ask";
   }
   $("#askBtn").addEventListener("click", askQuestion);

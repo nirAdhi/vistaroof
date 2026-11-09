@@ -52,7 +52,8 @@ from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import analytics, ask, backup, config, db, demo, extract, gemini, llm, logsetup, microsoft, notify, previews, repair, settings, sources, sync
+from . import analytics, ask, backup, config, db, demo, extract, gemini, llm, logsetup, microsoft, notify, ollama, previews, repair, settings, sources, sync
+from .errors import ApiUnavailable
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -526,11 +527,24 @@ def ask_question(q: Question) -> dict[str, Any]:
     summ = analytics.compute(docs, q.date_from or None, q.date_to or None)
     in_period = [d for d in docs if analytics._eff_date(d) and (not q.date_from or analytics._eff_date(d) >= q.date_from)
                  and (not q.date_to or analytics._eff_date(d) <= q.date_to)]
+    provider = settings.llm_provider()
+    busy = provider == "ollama" and sync.status().get("running")
+    started = time.monotonic()
     try:
-        return {"answer": ask.answer(q.question.strip(), summ, in_period)}
+        text = ask.answer(q.question.strip(), summ, in_period)
+    except ollama.TooSlow as exc:  # the Ollama PC is alive but did not answer in time (busy with a sync, small GPU)
+        raise HTTPException(504, str(exc) + (" A sync is running at the same time: the Ollama PC was reading documents while it thought; "
+                                              "try again when the sync is idle." if busy else ""))
+    except ApiUnavailable as exc:  # unreachable / no key / no credit: say which, the generic message hid it
+        raise HTTPException(503, str(exc)[:400])
     except Exception as exc:
         log.warning("ask failed: %s", exc)
         raise HTTPException(500, "The question could not be answered." + (f" ({exc})" if config.DEBUG else ""))
+    out: dict[str, Any] = {"answer": text, "seconds": round(time.monotonic() - started, 1), "reader": provider,
+                           "model": settings.provider_model(provider), "documents": len(in_period)}
+    if busy:
+        out["note"] = "A sync was running while this was answered: the Ollama PC reads documents and answers questions one at a time, so answers take longer until it finishes."
+    return out
 
 
 # ---------------------------------------------------------------------- uploads (app -> Drive / folder)
