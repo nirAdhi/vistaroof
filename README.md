@@ -41,6 +41,15 @@ faster previews). Untick "Allow uploads" on a source and the app never asks for 
 The dashboard ships with demo data (including generated sample pages for previews) so it can be
 explored before anything is connected.
 
+## Look and feel
+
+The dashboard and admin carry the Vista Roofing logo (`app/static/vista-logo.svg`, white variant for
+dark mode, the shield alone as the favicon) and the brand gold `#cd9f2b` as the accent: gold fills
+with black text for buttons, the active tab and progress bars, a darker gold for links so text stays
+readable, light and dark themes (◐ in the header, or the system setting). Chart series keep their
+own colour-blind-safe palette. The layout is built for phones too: below 1440 px the tabs take a row
+of their own and scroll sideways, below 760 px the filters, tables, drawers and modals go full width.
+
 ## How syncing works (full read once, then changes only)
 
 The first sync of a source lists every file and reads each one with the document reader. After that
