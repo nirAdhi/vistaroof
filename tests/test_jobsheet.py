@@ -140,9 +140,16 @@ def test_job_sheets_become_sales_invoices_in_the_ledger_without_a_model(admin, f
     assert {c["name"]: c["amount"] for c in s["top_customers"]} == {"Oak Drive": 20000}
     assert any(c["name"] == "Bakers Yard" and c["revenue"] == 31776.57 for c in admin.get("/api/companies").json())
     assert admin.get("/api/summary?from=2021-01-01&to=2021-12-31").json()["totals"]["revenue"] == 6659.5 + 5767.07
-    # the invoice row previews as its sheet, re-reads from the sheet, and keeps a hand correction across syncs
+    # the invoice row previews as a structured page of its sheet with that invoice highlighted; the job row too;
+    # the workbook row shows every sheet; numbers are shown as money, not binary floats
     r = admin.get(f"/api/documents/{inv2['id']}/preview")
-    assert r.status_code == 200 and r.text.startswith("JOB SUMMARY")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+    assert "<h1>Bakers Yard (job 101)</h1>" in r.text and "<tr class=focus><td>Invoice 2</td><td>2021-03-16</td><td class=n>6,659.50</td>" in r.text
+    assert "Paid (less 20% RCT)" in r.text and "<h2>Valuations</h2>" in r.text and "70,000.00" in r.text and "JOB SUMMARY" in r.text
+    assert "<script" not in r.text and "&lt;" not in r.text
+    assert "<tr class=focus>" not in admin.get(f"/api/documents/{job['id']}/preview").text
+    whole = admin.get(f"/api/documents/{book['id']}/preview").text
+    assert "Sheet: 101" in whole and "Sheet: 102" in whole and "Oak Drive (job 102)" in whole
     assert admin.post(f"/api/documents/{inv9['id']}/reprocess").json()["payment_status"] == "unpaid"
     assert admin.patch(f"/api/documents/{inv9['id']}", json={"payment_status": "paid"}).status_code == 200
     admin.post(f"/api/admin/sources/{src['id']}/sync?force=1"); wait_sync()

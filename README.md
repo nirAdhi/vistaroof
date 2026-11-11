@@ -105,6 +105,14 @@ nothing) with the contract value, final agreed figure, works to date per valuati
 its summary. Reader shown as `jobsheet`, confidence 100 %. A hand correction on an invoice row is kept
 across syncs; a column removed from the sheet is removed from the ledger.
 
+Previews of spreadsheets are HTML grids (`app/sheetview.py`), not text dumps: the workbook row shows
+every sheet with a sheet list, a sheet document its sheet, and a job summary sheet opens as a page —
+job and site, contract value / cost / mark-up / margin, final agreed, balance due, an invoices table
+(date, net excl VAT, paid) and a valuations table (works to date, increase, retention, date) — with the
+invoice row the owner opened highlighted and the raw grid underneath. Cell values are written as a
+person would (36672.21, not 36672.21000000001; dates without a midnight time) both in previews and in
+what the reader and the job-sheet parser see.
+
 **Counted once.** When the same invoice is in the ledger twice — a job-sheet row and the invoice PDF from
 the Invoices library — the sheet row is marked as a duplicate of the PDF (`app/dedupe.py`: same net
 amount to the cent, and dates within 60 days or the PDF naming the site) and the dashboard counts the

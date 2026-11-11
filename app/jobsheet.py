@@ -102,7 +102,7 @@ def parse(text: str) -> dict[str, Any] | None:
                 return i
         return -1
 
-    out: dict[str, Any] = {"site": None, "job_no": None, "project_manager": None, "contract": {}, "retention": None,
+    out: dict[str, Any] = {"site": None, "job_no": None, "address": None, "project_manager": None, "contract": {}, "retention": None,
                            "balance_due": None, "valuations": [], "final_agreed": None, "invoices": [], "invoiced_total": None}
     r = find("site")
     if r >= 0:
@@ -110,6 +110,9 @@ def parse(text: str) -> dict[str, Any] | None:
         for c, v in enumerate(rows[r]):
             if v.lower().startswith("job no"):
                 out["job_no"] = cell(r + 1, c) or None
+        # a second line under the site (the address / development name), unless it is the next label
+        nxt = cell(r + 2, 0)
+        out["address"] = nxt if nxt and not nxt.lower().startswith(("project manager", "contract", "valuation", "invoiced")) else None
     r = find("project manager")
     if r >= 0:
         out["project_manager"] = next((v for v in rows[r][1:] if v), None)
@@ -142,7 +145,11 @@ def parse(text: str) -> dict[str, Any] | None:
                 amount = _num(cell(w, c))
                 if not label or amount is None:
                     continue
-                out["valuations"].append({"label": label, "works_to_date": amount, "date": _date(cell(dates_row, c)) if dates_row >= 0 else None})
+                inc = find("increase", w)
+                ret = find("less", w)
+                out["valuations"].append({"label": label, "works_to_date": amount, "increase": _num(cell(inc, c)) if inc >= 0 else None,
+                                          "retention": _num(cell(ret, c)) if ret >= 0 else None,
+                                          "date": _date(cell(dates_row, c)) if dates_row >= 0 else None})
                 if label.lower().startswith("final agreed"):
                     out["final_agreed"] = amount
     # invoices: header "Invoice 1 … Total", the "INVOICE AMOUNT Excl VAT" row, the DATE row and the PAID row below it

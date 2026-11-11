@@ -419,8 +419,8 @@ def document_preview(doc_id: int, embed: bool = False):
             '<body style="margin:0;padding:12px;background:#ecebe6;display:flex;justify-content:center;align-items:flex-start">'
             f'<img src="/api/documents/{doc_id}/preview" alt="" style="max-width:100%;height:auto;display:block;box-shadow:0 2px 14px rgba(0,0,0,.18)"></body></html>'
         )
-    if mime == "text/plain":
-        mime = "text/plain; charset=utf-8"
+    if mime in ("text/plain", "text/html"):
+        mime = f"{mime}; charset=utf-8"
     safe = "".join(ch if ch.isalnum() or ch in "._- " else "_" for ch in (row["name"] or "document"))[:120]
     return Response(content=data, media_type=mime, headers={"Content-Disposition": f'inline; filename="{safe}"'})
 

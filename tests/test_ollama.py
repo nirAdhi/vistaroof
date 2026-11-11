@@ -114,6 +114,9 @@ def test_spreadsheet_rows_are_trimmed_and_a_whole_workbook_is_not_one_document(m
     buf = io.BytesIO(); wb.save(buf)
     text = textract.office_to_text(FileContent(mime=xlsx_mime, data=buf.getvalue()))
     assert text == "## Sheet: 101\nJOB SUMMARY\nBALANCE DUE | 70000"
+    # Excel's binary floats and midnight datetimes read as a person would write them
+    from datetime import datetime
+    assert textract._cells((36672.21000000001, 6606.0, 100.5, datetime(2021, 3, 16), None, None)) == "36672.21 | 6606 | 100.5 | 2021-03-16"
     extract.extract(_meta("Job Summary.xlsx", xlsx_mime), FileContent(mime=xlsx_mime, data=buf.getvalue()))
     assert "BALANCE DUE | 70000\n" in fake.requests[-1]["messages"][1]["content"] + "\n"
 

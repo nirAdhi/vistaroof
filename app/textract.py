@@ -174,10 +174,29 @@ def _cells(row: tuple) -> str:
     """One sheet row as text. A workbook's used range often runs far to the right of the last value
     (formatting, stray cells), so every row would end in dozens of empty " | " columns and a modest
     job-costing workbook would run past the size limit: trailing empties are dropped."""
-    vals = ["" if v is None else str(v).strip() for v in row]
+    vals = [_cell_text(v) for v in row]
     while vals and not vals[-1]:
         vals.pop()
     return " | ".join(vals) if any(vals) else ""
+
+
+def _cell_text(v) -> str:
+    """A cell as a person would read it: 36672.21 rather than 36672.21000000001 (binary floats from Excel
+    formulas), 6606 rather than 6606.0, a date without a midnight time."""
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return str(v)
+    if isinstance(v, float):
+        if v != v or v in (float("inf"), float("-inf")):
+            return str(v)
+        s = f"{v:.2f}".rstrip("0").rstrip(".")
+        return s if s not in ("", "-", "-0") else "0"
+    if hasattr(v, "hour") and hasattr(v, "year"):  # datetime
+        return v.date().isoformat() if (v.hour, v.minute, v.second) == (0, 0, 0) else v.isoformat(sep=" ", timespec="minutes")
+    if hasattr(v, "year"):  # date
+        return v.isoformat()
+    return str(v).strip()
 
 
 MAX_TEXT_CHARS = 300_000  # ~75k tokens: beyond this a file is not one document but a ledger of its own

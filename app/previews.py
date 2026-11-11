@@ -23,7 +23,7 @@ from . import config, db, images, settings, textract
 from .sources import FileContent, FileMeta, open_source
 
 PREVIEW_DIR = config.DATA_DIR / "previews"
-EXT = {"application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp", "text/plain": "txt"}
+EXT = {"application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp", "text/plain": "txt", "text/html": "html"}
 
 
 def enabled() -> bool:
@@ -63,11 +63,25 @@ def get(row: dict[str, Any]) -> tuple[bytes, str]:
     meta = FileMeta(source=row["source"], source_ref=row["source_ref"], source_id=row["source_id"], name=row["name"], mime=row["mime"],
                     folder=row["folder"], web_link=row["web_link"], size=row["size"], modified_at=row["modified_at"])
     content = textract.fetch_part(source, meta)  # a sheet document previews as that sheet's text
-    data, mime = to_viewable(content)
+    data, mime = _sheet_page(row, content) or to_viewable(content)
     if keep:
         PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
         (PREVIEW_DIR / f"{base}.{EXT[mime]}").write_bytes(data)
     return data, mime
+
+
+def _sheet_page(row: dict[str, Any], content: FileContent) -> tuple[bytes, str] | None:
+    """Spreadsheets as HTML grids (a job summary sheet as a structured page): the whole workbook for the file's
+    own row, the one sheet for a sheet document, with its invoice row highlighted for an invoice document."""
+    from . import sheetview
+
+    _, part = textract.split_ref(row["source_id"] or "")
+    if part is not None and content.text is not None:
+        sheet, _, inv = part.partition("#inv:")
+        return sheetview.render([(sheet, content.text)], row["name"], focus_sheet=sheet, focus_inv=inv or None).encode("utf-8"), "text/html"
+    if textract.is_spreadsheet(content.mime) and content.data is not None:
+        return sheetview.render(textract.workbook_sheets(content), row["name"]).encode("utf-8"), "text/html"
+    return None
 
 
 def to_viewable(content: FileContent) -> tuple[bytes, str]:

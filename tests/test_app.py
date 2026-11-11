@@ -346,8 +346,8 @@ def test_a_workbook_with_a_sheet_per_job_is_read_sheet_by_sheet(admin, fresh_db,
     assert (card["done_count"], card["skipped_count"]) == (5, 0)
     # the sheet document previews as that sheet alone; the workbook row shows the whole file
     r = admin.get(f"/api/documents/{sheets[2]['id']}/preview")
-    assert r.status_code == 200 and r.text.startswith("SITE COSTING") and "Mill Lane" in r.text and "Bakers Yard" not in r.text
-    assert "## Sheet: 101" in admin.get(f"/api/documents/{book['id']}/preview").text
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html") and "SITE COSTING" in r.text and "Mill Lane" in r.text and "Bakers Yard" not in r.text
+    assert "Sheet: 101" in admin.get(f"/api/documents/{book['id']}/preview").text
 
     # nothing changed → nothing re-read, the sheet documents are not "missing" from the folder listing
     n = len(fake_claude.calls)
