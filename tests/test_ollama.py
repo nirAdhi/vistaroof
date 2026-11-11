@@ -132,6 +132,29 @@ def test_spreadsheet_rows_are_trimmed_and_a_whole_workbook_is_not_one_document(m
     assert len(fake.requests) == n  # nothing was sent to the model
 
 
+def test_small_model_gets_the_invoice_page_not_the_terms(monkeypatch, fresh_db):
+    """A supplier PDF: two pages of terms and conditions, then the invoice. Within a small budget the invoice
+    page is kept and the terms pages are named as omitted; a short PDF is passed whole, no markers."""
+    from app import textract
+
+    terms = ("The Supplier shall not be liable for any indirect or consequential loss. Title to the goods passes on payment in full. "
+             "These conditions apply to every contract between the parties unless agreed otherwise in writing. ") * 12
+    invoice = "INVOICE No. 58927 Date 10/11/2026\nSOPREMA Ltd to Vista Roofing Ltd\nFlashing 2 x €120.00 = 240.00\nSubtotal 240.00\nVAT 23% 55.20\nTotal due €295.20"
+    text, cut = textract.pick_pages([terms, terms, invoice], 1500)
+    assert cut and text.startswith("[page 3 of 3]\nINVOICE No. 58927") and "Total due €295.20" in text
+    assert "indirect or consequential" not in text and "page(s) 1, 2 omitted" in text
+    assert textract.page_score(invoice) > textract.page_score(terms)
+    assert textract.pick_pages([invoice, "Thank you for your business"], 5000) == (invoice + "\n\nThank you for your business", False)
+    # the budget itself is capped for the small model (a long prompt is what makes a 3B model on a small GPU slow)
+    monkeypatch.setattr(config, "OLLAMA_MAX_DOC_CHARS", 9000)
+    assert extract.small_text_budget() == 9000
+    # one file at a time with Ollama (its PC serves one request at a time); the concurrency setting applies to cloud readers
+    settings.set_value("llm_provider", "ollama")
+    assert sync.workers() == 1
+    settings.set_value("llm_provider", "claude")
+    assert sync.workers() == settings.get_int("concurrency", 3) >= 1
+
+
 def test_photos_and_scanned_pdfs_are_skipped_without_fallback(monkeypatch, fresh_db):
     fake = FakeOllama()
     install_fake_ollama(monkeypatch, fake)
@@ -320,10 +343,19 @@ def test_slow_photos_are_skipped_and_the_sync_carries_on(admin, fresh_db, monkey
     st = sync.status()
     assert st["stop_reason"] is None and st["errors"] == 0  # the run was not aborted
     assert admin.get("/api/admin/sources").json()[0]["last_status"] == "ok"
-    n = len(fake.requests)
-    # the next sync does not try the slow photo again (a run must not lose minutes to it every time)
+    # with Ollama one file is read at a time (parallel requests only queue on the Ollama PC and burn their timeout);
+    # photos are listed last so the text and vision models are not swapped on every file
+    assert sync.workers() == 1
+    assert [r["file"] for r in st["sources"][src["id"]]["recent"]] == ["INV-1.txt", "handwritten.jpg"]
+    n = len(fake.timeouts)  # one entry per request sent, the timed-out one included
+    # a slow file gets two more goes (the queue or a model swap may have been the cause), then the sync leaves it alone
     admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
-    assert len(fake.requests) == n
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    assert len(fake.timeouts) == n + 2
+    doc = next(d for d in admin.get("/api/documents?limit=100").json() if d["name"] == "handwritten.jpg")
+    assert doc["status"] == "skipped" and doc["error"].startswith("reader too slow") and "gave up after 3 attempts" in doc["error"]
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    assert len(fake.timeouts) == n + 2  # not tried a fourth time
     # the owner can still enter it by hand ...
     r = admin.patch(f"/api/documents/{docs['handwritten.jpg']['id']}", json={"doc_type": "receipt", "total": 40})
     assert r.status_code == 200 and r.json()["status"] == "done" and r.json()["model"] == "manual"

@@ -37,7 +37,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from . import db, extract, llm, notify, settings, textract
+from . import db, extract, llm, notify, ollama, settings, textract
 from .sources import SUPPORTED_MIMES, FileContent, FileMeta, open_source
 
 log = logging.getLogger(__name__)
@@ -233,6 +233,9 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
     try:
         source = open_source(src)
         files = list(source.list_files())
+        # Photos last: on a small GPU the text model and the vision model cannot both stay loaded, and alternating
+        # between them swaps models on every file (seconds each, and the swap counts against the file's timeout).
+        files.sort(key=lambda m: m.mime.startswith("image/"))
         _bump("total", len(files))
         _set(phase="processing", message=f"{len(files)} files in {src['name']}")
         _src_update(src["id"], phase="processing", total=len(files))
@@ -242,7 +245,7 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
         # since learnt to read (a still-unsupported type is skipped again in a millisecond, no download involved).
         retry = ("unsupported file type", "text file too large") + ((extract.NEEDS_VISION_PREFIX,) if extract.vision_available() else ())
         # ("text file too large": the wording before spreadsheet rows were trimmed; such files may fit now)
-        with ThreadPoolExecutor(max_workers=max(1, settings.get_int("concurrency", 3))) as pool:
+        with ThreadPoolExecutor(max_workers=workers()) as pool:
             futures = {pool.submit(_process_one, source, meta, force, retry): meta for meta in files}
             for fut in as_completed(futures):
                 if fut.cancelled():
@@ -291,6 +294,15 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
         log.exception("sync of %s failed", src["name"])
 
 
+def workers() -> int:
+    """Files read at the same time. With Ollama it is one: the Ollama PC serves one request at a time, so parallel
+    requests only queue there and spend their timeout waiting — three files sent together meant the third waited for
+    two whole reads before its own clock even mattered, and was reported "too slow". Cloud readers take the setting."""
+    if settings.llm_provider() == "ollama":
+        return 1
+    return max(1, settings.get_int("concurrency", 3))
+
+
 def _process_one(source, meta: FileMeta, force: bool, retry_prefix: str | tuple[str, ...] | None = None) -> str:
     """Read one file if needed. Returns the resulting status."""
     if _state["stop_requested"]:
@@ -326,8 +338,8 @@ def _process_one(source, meta: FileMeta, force: bool, retry_prefix: str | tuple[
         _bump("processed")
         log.debug("read %s -> %s %s", meta.name, fields.get("doc_type"), fields.get("total"))
         return (result := "done")
-    except ValueError as exc:  # unsupported / too large / unreadable
-        db.mark_skipped(doc_id, str(exc))
+    except ValueError as exc:  # unsupported / too large / unreadable; too slow for the model = counted, retried a couple of times
+        db.mark_skipped(doc_id, str(exc), count=isinstance(exc, ollama.TooSlow))
         _bump("skipped")
         return (result := "skipped")
     except extract.ApiUnavailable as exc:  # bad key / no credit: not this file's fault, stop the whole run
@@ -375,7 +387,7 @@ def _process_workbook(source, meta: FileMeta, doc_id: int, sheets: list[tuple[st
             db.save_extraction(cid, fields, model)
             _bump("processed")
         except ValueError as exc:
-            db.mark_skipped(cid, str(exc))
+            db.mark_skipped(cid, str(exc), count=isinstance(exc, ollama.TooSlow))
             _bump("skipped")
         except extract.ApiUnavailable as exc:
             db.set_status(cid, "pending")

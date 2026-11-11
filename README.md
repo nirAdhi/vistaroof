@@ -153,10 +153,19 @@ answer is retried twice with the error pointed out. If the Ollama PC is asleep t
 one clear message instead of failing every file; photos and scanned PDFs are marked *skipped* with
 the reason unless the Claude fallback is on.
 
+With Ollama the sync reads **one file at a time**: the Ollama PC serves one request at a time, so
+parallel requests only queue there and spend their timeout waiting (three files sent together meant
+the third waited for two whole reads before its own clock mattered, and was reported "too slow").
+Photos and scans are read after the text documents so a small GPU is not swapping the text and
+vision models on every file. The small model gets at most `OLLAMA_MAX_DOC_CHARS` (12,000) characters
+per document; a multi-page PDF keeps the pages that carry amounts and document details and drops
+terms-and-conditions pages first, naming the omitted pages.
+
 A file is never allowed to stall the sync: when a request times out but the Ollama server still
-answers a probe, that *file* is skipped as "reader too slow" (hand it to the fallback reader if one
-is set, enter it by hand, or Re-read it later) and the run carries on. Only a server that answers
-nothing is reported as unreachable. A file whose read fails with an error is retried on the next two
+answers a probe, that *file* is skipped as "reader too slow" and the run carries on. Such a file is
+tried again on the next two syncs (the queue or a model swap was often the cause) and then left alone
+with "gave up after 3 attempts" until it is entered by hand, re-read, or handed to the fallback
+reader. Only a server that answers nothing is reported as unreachable. A file whose read fails with an error is retried on the next two
 syncs at most; after three attempts it rests as an error (with "gave up" in the message) until it
 changes, a Full re-read, Re-read, or a hand entry. Rows left "processing" by a restart mid-sync go
 back to pending at start-up.

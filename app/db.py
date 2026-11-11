@@ -495,6 +495,8 @@ def needs_processing(doc_id: int, force: bool = False, retry_prefix: str | tuple
         return True
     if row["status"] == "skipped" and retry_prefix and (row["error"] or "").startswith(tuple(retry_prefix)):
         return True
+    if row["status"] == "skipped" and (row["error"] or "").startswith(TOO_SLOW_PREFIX) and (row["attempts"] or 0) < MAX_ATTEMPTS:
+        return True  # the model ran out of time on it: worth another go (less queue, no model swap), up to MAX_ATTEMPTS
     if row["status"] in ("done", "skipped", "split") and row["processed_modified_at"] == row["modified_at"]:
         return False
     if row["status"] == "error" and (row["attempts"] or 0) >= MAX_ATTEMPTS and row["processed_modified_at"] == row["modified_at"]:
@@ -532,12 +534,24 @@ def reset_stuck_processing() -> int:
     return n
 
 
-def mark_skipped(doc_id: int, reason: str) -> None:
+TOO_SLOW_PREFIX = "reader too slow"  # ollama.TooSlow reasons start with this; such skips are retried up to MAX_ATTEMPTS
+
+
+def mark_skipped(doc_id: int, reason: str, count: bool = False) -> int:
+    """Skip a file with the reason. ``count`` (a model that did not finish in time) counts the attempt like an
+    error, so the next syncs try it again a couple of times — the queue or a model swap may have been the cause —
+    and then leave it alone. Returns the attempts."""
     with connect() as conn:
+        attempts = 0
+        if count:
+            attempts = ((conn.execute("SELECT attempts FROM documents WHERE id=?", (doc_id,)).fetchone() or {"attempts": 0})["attempts"] or 0) + 1
+            if attempts >= MAX_ATTEMPTS:
+                reason = f"{reason[:380]} — gave up after {attempts} attempts; enter the figures by hand or use Re-read"
         conn.execute(
-            "UPDATE documents SET status='skipped', error=?, processed_at=?, processed_modified_at=modified_at WHERE id=?",
-            (reason, now_iso(), doc_id),
+            "UPDATE documents SET status='skipped', error=?, attempts=?, processed_at=?, processed_modified_at=modified_at WHERE id=?",
+            (reason[:500], attempts, now_iso(), doc_id),
         )
+    return attempts
 
 
 def save_extraction(doc_id: int, fields: dict[str, Any], model: str) -> None:

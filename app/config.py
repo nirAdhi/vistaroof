@@ -37,6 +37,7 @@ OLLAMA_MODEL      Model name as shown by ``ollama list`` (default ``qwen2.5:3b``
 OLLAMA_VISION_MODEL  Optional vision model on the same Ollama server (e.g. ``qwen3-vl:2b``) that reads photos
                   and scanned PDFs locally; empty = off, those files go to the fallback reader or are skipped.
 OLLAMA_NUM_CTX / OLLAMA_TIMEOUT / OLLAMA_KEEP_ALIVE   context tokens (min 8192), seconds, keep-alive.
+OLLAMA_MAX_DOC_CHARS  text per document sent to the small model (default 12000 ≈ 4k tokens); invoice pages are kept, terms pages dropped.
 OLLAMA_VISION_TIMEOUT / OLLAMA_VISION_MAX_SIDE   seconds per photo / scan (default 300) and the longest image side sent (1280 px).
                   A file that takes longer is *skipped* (enter it by hand or Re-read); the server is only called
                   unreachable when it does not answer a version probe.
@@ -99,6 +100,9 @@ OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "180"))         # seconds per
 OLLAMA_VISION_TIMEOUT = float(os.getenv("OLLAMA_VISION_TIMEOUT", "300"))  # seconds per photo / scan: a small GPU swaps models and is slower on images
 OLLAMA_VISION_MAX_SIDE = int(os.getenv("OLLAMA_VISION_MAX_SIDE", "1280"))  # px: photos are shrunk to this before being sent (fewer image tokens = faster)
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m").strip()  # keep the model in memory between documents
+# Characters of document text the small model gets per file (~4k tokens). A 3B model on a small GPU reads a long
+# prompt slowly; multi-page PDFs keep the pages with amounts and drop terms-and-conditions pages first (textract.pick_pages).
+OLLAMA_MAX_DOC_CHARS = int(os.getenv("OLLAMA_MAX_DOC_CHARS", "12000"))
 
 # Initial values for the settings table (used only until the admin changes them in the UI).
 ENV_DEFAULTS = {

@@ -606,7 +606,8 @@ def _small_to_fields(obj: dict[str, Any], truncated: bool) -> dict[str, Any]:
 
 def small_text_budget() -> int:
     """How many characters of document text fit next to the prompt in the model's context."""
-    return max(4000, (max(config.OLLAMA_NUM_CTX, 8192) - SMALL_PROMPT_RESERVE_TOKENS) * CHARS_PER_TOKEN)
+    by_ctx = (max(config.OLLAMA_NUM_CTX, 8192) - SMALL_PROMPT_RESERVE_TOKENS) * CHARS_PER_TOKEN
+    return max(4000, min(by_ctx, config.OLLAMA_MAX_DOC_CHARS))  # a long prompt is what makes a 3B model on a small GPU slow
 
 
 VISION_MAX_PAGES = 2     # scanned PDF pages sent to the local vision model
@@ -671,14 +672,19 @@ def _extract_ollama_vision(meta: FileMeta, content: FileContent) -> tuple[dict[s
 
 
 def _extract_ollama(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any], str]:
+    pages: list[str] | None = None
     try:
-        text = textract.document_text(meta, content)
+        if content.mime == "application/pdf" and content.text is None:
+            pages = textract.pdf_pages(content.data or b"")  # page by page: the invoice page wins over terms pages below
+            text = "\n\n".join(p.strip() for p in pages if p.strip())
+        else:
+            text = textract.document_text(meta, content)
     except textract.NeedsVision:
         if config.OLLAMA_VISION_MODEL:  # a vision model on the same Ollama server reads photos and scans locally
             return _extract_ollama_vision(meta, content)
         raise  # propagates to extract(): fallback reader, or skipped with the reason
     textract.check_length(text)
-    text, truncated = textract.fit(text, small_text_budget())
+    text, truncated = textract.pick_pages(pages, small_text_budget()) if pages and len(pages) > 1 else textract.fit(text, small_text_budget())
     messages = [
         {"role": "system", "content": build_small_prompt()},
         {"role": "user", "content": f"File name: {meta.name}\nFolder: {meta.folder}\n\n<document_text>\n{text}\n</document_text>\n\nReturn the JSON object."},

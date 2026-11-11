@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 
 from . import db
 from .sources import FileContent, FileMeta
@@ -194,8 +195,8 @@ def check_length(text: str) -> None:
     )
 
 
-def pdf_to_text(data: bytes) -> str:
-    """Text layer of a PDF. Raises NeedsVision when there is none (scanned / image-only PDF)."""
+def pdf_pages(data: bytes) -> list[str]:
+    """Text layer of a PDF, one string per page. Raises NeedsVision when there is none (scanned / image-only PDF)."""
     from pypdf import PdfReader
 
     try:
@@ -210,10 +211,61 @@ def pdf_to_text(data: bytes) -> str:
         raise
     except Exception as exc:
         raise ValueError(f"could not read PDF ({type(exc).__name__}: {str(exc)[:120]})") from exc
-    text = "\n\n".join(p.strip() for p in pages if p and p.strip())
-    if len(text.strip()) < 20:
+    if sum(len(p.strip()) for p in pages) < 20:
         raise NeedsVision("scanned PDF without a text layer")
-    return text
+    return pages
+
+
+def pdf_to_text(data: bytes) -> str:
+    """Text layer of a PDF. Raises NeedsVision when there is none (scanned / image-only PDF)."""
+    return "\n\n".join(p.strip() for p in pdf_pages(data) if p and p.strip())
+
+
+_MONEY = re.compile(r"(?:€|EUR|£|\$)\s?\d|\b\d{1,3}(?:[,.]\d{3})*[.,]\d{2}\b")
+_PAGE_WORDS = ("invoice", "total", "vat", "amount", "due", "balance", "receipt", "subtotal", "net", "credit note",
+               "statement", "qty", "quantity", "payslip", "remittance", "date", "account")
+
+
+def page_score(text: str) -> float:
+    """How much a page looks like the document itself (amounts, totals, dates) rather than its terms and
+    conditions (walls of prose with hardly a number). Used to decide which pages a small model sees."""
+    low = text.lower()
+    money = len(_MONEY.findall(text))
+    words = sum(low.count(w) for w in _PAGE_WORDS)
+    digits = sum(ch.isdigit() for ch in text) / max(1, len(text))
+    score = money * 3 + words * 2 + digits * 200
+    if len(text) > 2000 and digits < 0.02:  # a long page with almost no numbers: terms, conditions, legal notes
+        score -= 40
+    return score
+
+
+def pick_pages(pages: list[str], max_chars: int) -> tuple[str, bool]:
+    """The pages of a PDF a small model should see within ``max_chars``: a supplier invoice often carries two
+    pages of terms before the invoice page, and a 3B model on a small GPU reads every character slowly. The
+    best-scoring page is always kept; more pages are added in score order while they fit; the result is in
+    page order with page markers, and the omitted pages are named. Second value: True when anything was cut."""
+    numbered = [(i, p.strip()) for i, p in enumerate(pages) if p and p.strip()]
+    if not numbered:
+        return "", False
+    if sum(len(p) + 2 for _, p in numbered) <= max_chars:
+        return "\n\n".join(p for _, p in numbered), False
+    ranked = sorted(numbered, key=lambda ip: page_score(ip[1]), reverse=True)
+    chosen, used = [], 0
+    for i, p in ranked:
+        cost = len(p) + 40
+        if chosen and used + cost > max_chars:
+            continue
+        chosen.append(i)
+        used += cost
+    chosen.sort()
+    parts = [f"[page {i + 1} of {len(pages)}]\n{pages[i].strip()}" for i in chosen]
+    dropped = [str(i + 1) for i, _ in numbered if i not in chosen]
+    text = "\n\n".join(parts)
+    if dropped:
+        text += f"\n\n[page(s) {', '.join(dropped)} omitted: terms or notes without the document's amounts]"
+    text, _ = fit(text, max_chars)  # the single best page may itself be longer than the budget
+    log.debug("kept PDF pages %s of %d for the small model", [i + 1 for i in chosen], len(pages))
+    return text, True
 
 
 def pdf_page_images(data: bytes, max_pages: int = 2) -> list:

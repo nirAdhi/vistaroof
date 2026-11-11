@@ -26,7 +26,7 @@ from typing import Any
 
 import httpx
 
-from . import config, modelout
+from . import config, db, modelout
 from .errors import ApiUnavailable
 
 log = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ class TooSlow(ValueError):
     an outage, which would stop the run and retry the same slow file on every sync."""
 
 
-TOO_SLOW_PREFIX = "reader too slow"
+TOO_SLOW_PREFIX = db.TOO_SLOW_PREFIX  # "reader too slow": the sync retries such skips up to db.MAX_ATTEMPTS
 
 
 def build_http_client(timeout: float | None = None) -> httpx.Client:
