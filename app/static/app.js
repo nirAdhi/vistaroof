@@ -43,6 +43,8 @@
   const label = (s) => s ? String(s).replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()) : "—";
   /** Source kinds: Google Drive, Microsoft 365 (SharePoint/OneDrive) or a local folder. */
   const kindLabel = (k) => ({ drive: "Google Drive", m365: "SharePoint / OneDrive", local: "folder", demo: "demo" })[k] || k;
+  /** A document nobody has figures for yet (not read, not being read, not a workbook whose sheets are the documents): hand entry applies. */
+  const notRead = (d) => d.status !== "done" && d.status !== "processing" && d.status !== "split" && d.source !== "demo";
   /** Why a sync run started. A run nobody pressed a button for is the watcher reacting to a change in SharePoint / Drive. */
   const TRIGGER = { manual: "Sync button", watch: "Change in SharePoint / Drive", queued: "Queued behind the previous run", schedule: "Auto-sync timer", oauth: "After sign-in", upload: "Upload" };
   /** Text for the link that opens the original file where it lives. */
@@ -443,7 +445,7 @@
           ${n > 1 ? `<button class="btn sm" id="viewerPrev" ${i <= 0 ? "disabled" : ""}>‹ Previous</button><button class="btn sm" id="viewerNext" ${i >= n - 1 ? "disabled" : ""}>Next ›</button>` : ""}
           <a class="btn sm" href="/api/documents/${d.id}/preview" target="_blank" rel="noopener">Open full size</a>
           ${d.web_link ? `<a class="btn sm" href="${esc(d.web_link)}" target="_blank" rel="noopener">${openWhere(d)}</a>` : ""}
-          <button class="btn sm ${d.status !== "done" && d.source !== "demo" ? "primary" : ""}" id="viewerDetails">${d.status !== "done" && d.source !== "demo" ? "Enter by hand" : "Edit details"}</button>
+          <button class="btn sm ${notRead(d) ? "primary" : ""}" id="viewerDetails">${notRead(d) ? "Enter by hand" : d.status === "split" ? "Details" : "Edit details"}</button>
           <button class="icon-btn" id="viewerClose" aria-label="Close">✕</button>
         </div>
       </div>
@@ -775,7 +777,7 @@
     $("#docTable").innerHTML = tableHtml([
       { key: "issue_date", label: "Date", render: (r) => r.issue_date ? fmtDate(r.issue_date) : r.modified_at ? `<span class="muted" title="No date was read from the document; placed by the file's date">~${fmtDate(r.modified_at.slice(0, 10))}</span>` : "—" },
       { key: "name", label: "File", render: (r) => `<div>${esc(r.name)}</div><div class="muted small">${esc(r.folder || r.source_name || "")}</div>` },
-      { key: "doc_type", label: "Type", render: (r) => r.status === "done" ? esc(label(r.doc_type)) : `<span class="chip">${esc(label(r.status))}</span>` },
+      { key: "doc_type", label: "Type", render: (r) => r.status === "done" ? esc(label(r.doc_type)) : r.status === "split" ? `<span class="chip" title="${esc(r.error || "")}">Workbook</span>` : `<span class="chip">${esc(label(r.status))}</span>` },
       { key: "treatment", label: "Counted as", render: (r) => r.treatment ? treatmentChip(r.treatment) : "" },
       { key: "counterparty", label: "Who", render: (r) => r.counterparty ? companyLink(r.counterparty) : "" },
       { key: "document_number", label: "Number", render: (r) => esc(r.document_number || "") },
@@ -783,7 +785,7 @@
       { key: "payment_status", label: "Paid?", render: (r) => r.payment_status && r.payment_status !== "not_applicable" ? statusChip(r.payment_status) : "" },
       { key: "net_amount", label: "Net", num: true, render: (r) => r.net_amount != null ? money(r.net_amount) : "" },
       { key: "total", label: "Total", num: true, render: (r) => r.total != null ? money(r.total) : "" },
-      { key: "confidence", label: "", render: (r) => (r.status !== "done" && r.status !== "processing" && r.source !== "demo" ? `<button class="btn sm" data-manual="${r.id}" title="${esc(r.error || "Not read")} — type the figures in yourself">Enter by hand</button> ` : "") + (r.overridden ? `<span class="chip" title="${r.model === "manual" ? "Figures entered by hand" : "Edited by hand"}">${r.model === "manual" ? "by hand" : "edited"}</span> ` : "") + (r.flags && r.flags.length ? `<span class="flag" title="${esc(r.flags.join(", "))}">⚑</span> ` : "") + previewBtn(r) },
+      { key: "confidence", label: "", render: (r) => (notRead(r) ? `<button class="btn sm" data-manual="${r.id}" title="${esc(r.error || "Not read")} — type the figures in yourself">Enter by hand</button> ` : "") + (r.overridden ? `<span class="chip" title="${r.model === "manual" ? "Figures entered by hand" : "Edited by hand"}">${r.model === "manual" ? "by hand" : "edited"}</span> ` : "") + (r.flags && r.flags.length ? `<span class="flag" title="${esc(r.flags.join(", "))}">⚑</span> ` : "") + previewBtn(r) },
     ], state.docs, { rowAttr: (r) => `class="row-link" data-id="${r.id}"`, empty: "No documents match" });
     $$("#docTable tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openDoc(+tr.dataset.id)));
     $$("#docTable [data-manual]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openDoc(+b.dataset.manual); }));
@@ -837,7 +839,7 @@
   async function openDoc(id) {
     const d = await api(`/api/documents/${id}`);
     const m = state.meta;
-    const manual = d.status !== "done" && d.source !== "demo";  // nothing was read: the person types the figures in while looking at the file
+    const manual = notRead(d) || (d.status === "processing" && d.source !== "demo");  // nothing was read: the person types the figures in while looking at the file
     const opt = (list, cur, allowNull = true, placeholder = "—") => (allowNull ? `<option value="">${placeholder}</option>` : "") + list.map((v) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(label(v))}</option>`).join("");
     const field = (name, type = "text", ph = "") => `<input name="${name}" type="${type}" value="${esc(d[name] ?? "")}" ${type === "number" ? 'step="0.01"' : ""} ${ph ? `placeholder="${esc(ph)}"` : ""}>`;
     const reason = d.error ? ` — ${esc(d.error.replace(/\.\s*$/, ""))}` : "";
@@ -858,7 +860,7 @@
         <div><h2>${esc(d.name)}</h2><div class="muted small">${esc(d.folder || "")} · ${d.size ? (d.size / 1024).toFixed(0) + " KB" : ""} · modified ${esc((d.modified_at || "").slice(0, 10))}</div></div>
         <button class="icon-btn" id="drawerClose" aria-label="Close">✕</button>
       </div>
-      ${manual ? manualPanel : d.status !== "done" ? `<div class="note" style="margin-top:12px"><b>${label(d.status)}</b>${d.error ? ` — ${esc(d.error)}` : ""}</div>` : ""}
+      ${manual ? manualPanel : d.status === "split" ? `<div class="note" style="margin-top:12px"><b>Workbook</b> — ${esc(d.error || "read sheet by sheet")}. The figures are on the sheet documents, not here. <button class="link-btn" id="showSheets">Show its sheet documents</button></div>` : d.status !== "done" ? `<div class="note" style="margin-top:12px"><b>${label(d.status)}</b>${d.error ? ` — ${esc(d.error)}` : ""}</div>` : ""}
       <iframe class="preview-frame" src="/api/documents/${d.id}/preview?embed=1" title="Preview of ${esc(d.name)}" loading="lazy"></iframe>
       <div class="small"><button class="link-btn" id="drawerPreview">Open large preview</button>${d.web_link ? ` · <a href="${esc(d.web_link)}" target="_blank" rel="noopener">${openWhere(d)}</a>` : ""}${d.counterparty ? ` · <button class="link-btn" data-company="${esc(d.counterparty)}">All documents from ${esc(d.counterparty)}</button>` : ""}${d.source === "demo" ? ` · <span class="muted">sample rendering of demo data</span>` : ""}</div>
       ${d.summary ? `<p style="margin:12px 0 4px">${esc(d.summary)}</p>` : ""}
@@ -894,6 +896,8 @@
         ? "Figures saved by hand are kept even when the file is re-synced. If you would rather let a model try, “Re-read” sends just this file to the reader you pick (Claude and Gemini read photos and scans; Ollama needs its vision model for those)."
         : "Saved changes are kept even when the file is re-synced. “Re-read” discards them and extracts the file again with the reader you pick — useful for a photo or scan that the text-only Ollama model skipped: send just that file to Claude or Gemini."}</p>`;
     $("#drawerClose").addEventListener("click", closeDrawer);
+    const sheetsBtn = $("#showSheets");
+    if (sheetsBtn) sheetsBtn.addEventListener("click", () => { closeDrawer(); $("#docSearch").value = d.name + " ›"; $("#docStatus").value = ""; showView("documents"); loadDocs(); });
     const dp = $("#drawerPreview"); if (dp) dp.addEventListener("click", () => openPreview(d));
     bindCompanies(drawer);
     const savePatch = async (patch, okMsg) => {
@@ -949,7 +953,7 @@
       <div class="sync-status"><b>${esc(st.message || (st.running ? "Working…" : "Idle"))}</b>${st.current_source ? ` — ${esc(st.current_source)}` : ""}${st.current_file ? ` · ${esc(st.current_file)}` : ""}</div>
       <div class="progress"><i style="width:${pct}%"></i></div>
       <div class="sync-status">${st.running ? `${st.processed + st.skipped + st.errors} of ${st.total}` : ""} · read ${st.processed} · unchanged/skipped ${st.skipped} · errors ${st.errors}</div>
-      <div style="margin:12px 0" class="small">In database: ${Object.entries(c).map(([k, v]) => `<span class="chip">${esc(label(k))}: ${v}</span>`).join(" ") || "nothing yet"}</div>
+      <div style="margin:12px 0" class="small">In database: ${Object.entries(c).map(([k, v]) => `<span class="chip">${k === "split" ? "Workbooks read sheet by sheet" : esc(label(k))}: ${v}</span>`).join(" ") || "nothing yet"}</div>
       <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn primary" id="syncNow" ${st.running || !enabled || !state.config.llm_ready ? "disabled" : ""}>Sync new &amp; changed files</button>
         <button class="btn" id="syncForce" ${st.running || !enabled || !state.config.llm_ready ? "disabled" : ""} title="Re-read every file, even ones already processed">Full re-read</button>

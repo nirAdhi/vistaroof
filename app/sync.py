@@ -36,8 +36,8 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from . import db, extract, llm, notify, settings
-from .sources import SUPPORTED_MIMES, FileMeta, open_source
+from . import db, extract, llm, notify, settings, textract
+from .sources import SUPPORTED_MIMES, FileContent, FileMeta, open_source
 
 log = logging.getLogger(__name__)
 
@@ -263,7 +263,12 @@ def _process_one(source, meta: FileMeta, force: bool, retry_prefix: str | tuple[
             _bump("skipped")
             return "skipped"
         db.set_status(doc_id, "processing")
-        content = source.fetch(meta)
+        content = textract.fetch_part(source, meta)
+        if textract.is_spreadsheet(content.mime):
+            sheets = textract.workbook_sheets(content)
+            if textract.should_split(sheets):
+                return _process_workbook(source, meta, doc_id, sheets, force)
+            db.remove_missing_sheets(meta.source_ref, meta.source_id, set())  # a workbook that no longer splits: drop its old sheet rows
         fields, model = extract.extract(meta, content)
         db.save_extraction(doc_id, fields, model)
         _bump("processed")
@@ -286,6 +291,53 @@ def _process_one(source, meta: FileMeta, force: bool, retry_prefix: str | tuple[
         return "error"
 
 
+def sheet_meta(meta: FileMeta, sheet: str) -> FileMeta:
+    """The document row for one sheet of a workbook: same file, its own source_id and a name that says which sheet."""
+    return FileMeta(source=meta.source, source_ref=meta.source_ref, source_id=textract.sheet_ref(meta.source_id, sheet),
+                    name=f"{meta.name} › {sheet}", mime=meta.mime, folder=meta.folder, web_link=meta.web_link, size=None,
+                    modified_at=meta.modified_at, uploaded_by=meta.uploaded_by)
+
+
+def _process_workbook(source, meta: FileMeta, doc_id: int, sheets: list[tuple[str, str]], force: bool) -> str:
+    """A workbook whose sheets are separate records (one job summary per sheet): one document per sheet, each read on
+    its own; the workbook's own row becomes ``split`` and points at them. Sheets that vanished are marked removed."""
+    present: set[str] = set()
+    for name, text in sheets:
+        if _state["stop_requested"]:
+            db.set_status(doc_id, "pending")
+            return "stopped"
+        child = sheet_meta(meta, name)
+        present.add(child.source_id)
+        cid = db.upsert_file_metadata(child.as_dict())
+        if not db.needs_processing(cid, force=force):
+            _bump("skipped")
+            continue
+        _set(current_file=child.name)
+        db.set_status(cid, "processing")
+        try:
+            fields, model = extract.extract(child, FileContent(mime="text/plain", text=text))
+            db.save_extraction(cid, fields, model)
+            _bump("processed")
+        except ValueError as exc:
+            db.mark_skipped(cid, str(exc))
+            _bump("skipped")
+        except extract.ApiUnavailable as exc:
+            db.set_status(cid, "pending")
+            db.set_status(doc_id, "pending")
+            _note_error(child.name, str(exc))
+            _abort(str(exc))
+            return "error"
+        except Exception as exc:
+            msg = f"{type(exc).__name__}: {str(exc)[:400]}"
+            db.mark_error(cid, msg)
+            _note_error(child.name, msg)
+    gone = db.remove_missing_sheets(meta.source_ref, meta.source_id, present)
+    db.mark_split(doc_id, len(sheets))
+    _bump("skipped")  # the workbook row itself holds no figures
+    log.info("%s: read as %d sheets (%d no longer present)", meta.name, len(sheets), gone)
+    return "split"
+
+
 def reprocess(doc_id: int, provider: str | None = None) -> dict[str, Any]:
     """Re-run extraction for a single stored document (synchronously), discarding hand edits.
     ``provider`` forces a particular reader for this file (e.g. Gemini for a photo Ollama skipped)."""
@@ -305,7 +357,12 @@ def reprocess(doc_id: int, provider: str | None = None) -> dict[str, Any]:
     db.reset_document(doc_id)
     db.set_status(doc_id, "processing")
     try:
-        content = source.fetch(meta)
+        content = textract.fetch_part(source, meta)
+        if textract.is_spreadsheet(content.mime):
+            sheets = textract.workbook_sheets(content)
+            if textract.should_split(sheets):  # Re-read on the workbook row re-reads every sheet document (hand entries on sheets stay: needs_processing)
+                _process_workbook(source, meta, doc_id, sheets, force=False)
+                return db.get_document(doc_id) or {}
         fields, model = extract.extract_with(provider, meta, content) if provider else extract.extract(meta, content)
         db.save_extraction(doc_id, fields, model)
     except ValueError as exc:

@@ -299,6 +299,71 @@ def test_two_drives_same_file_id_do_not_collide(admin, fresh_db, fake_claude, mo
     assert len(admin.get(f"/api/documents?source_ref={a['id']}").json()) == 1
 
 
+def _job_workbook(path: Path, jobs: list[tuple[str, str, int]]) -> None:
+    """A job-costing workbook like Cormac's: one sheet per job, every sheet built from the same template."""
+    import openpyxl
+
+    wb = openpyxl.Workbook(); wb.remove(wb.active)
+    for no, site, value in jobs:
+        ws = wb.create_sheet(no)
+        ws.append(["JOB SUMMARY"] + [None] * 30)
+        ws.append(["SITE:", None, "JOB NO:"]); ws.append([site, None, no])
+        ws.append(["CONTRACT VALUE/SUM", value]); ws.append(["BALANCE DUE", value - 5000])
+    wb.create_sheet("Notes")  # empty: ignored
+    wb.save(path)
+
+
+def test_a_workbook_with_a_sheet_per_job_is_read_sheet_by_sheet(admin, fresh_db, fake_claude, tmp_path):
+    import os
+
+    folder = tmp_path / "Turnover"; folder.mkdir()
+    _job_workbook(folder / "Vista Job Summary.xlsx", [("101", "Bakers Yard", 70000), ("102", "Oak Drive", 42000), ("103", "Mill Lane", 12500), ("104", "Quay St", 9000)])
+    # an ordinary two-sheet statement (data + totals) stays one document
+    import openpyxl
+    wb = openpyxl.Workbook(); wb.active.title = "Statement"; wb.active.append(["Date", "Amount"]); wb.active.append(["2026-03-01", 100])
+    wb.create_sheet("Totals").append(["Total", 100]); wb.save(folder / "AIB statement March.xlsx")
+    src = admin.post("/api/admin/sources", json={"kind": "local", "name": "VistaTurnover", "local_folder": str(folder)}).json()
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+
+    docs = {d["name"]: d for d in admin.get("/api/documents?limit=100").json()}
+    book = docs["Vista Job Summary.xlsx"]
+    assert book["status"] == "split" and "4 separate sheets" in book["error"]
+    sheets = [docs[f"Vista Job Summary.xlsx › {no}"] for no in ("101", "102", "103", "104")]
+    assert all(s["status"] == "done" and s["folder"] == book["folder"] for s in sheets)
+    assert docs["AIB statement March.xlsx"]["status"] == "done" and docs["AIB statement March.xlsx"]["doc_type"] == "bank_statement"
+    # each sheet went to the model on its own, as text, with only that job in it
+    texts = {call[-1]["text"].split("File name: ", 1)[1].split("\n", 1)[0]: call[0]["text"] for call in fake_claude.calls}
+    assert "Bakers Yard |  | 101" in texts["Vista Job Summary.xlsx › 101"] and "Oak Drive" not in texts["Vista Job Summary.xlsx › 101"]
+    assert "## Sheet" not in texts["Vista Job Summary.xlsx › 102"]
+    card = admin.get("/api/admin/sources").json()[0]
+    assert (card["done_count"], card["skipped_count"]) == (5, 0)
+    # the sheet document previews as that sheet alone; the workbook row shows the whole file
+    r = admin.get(f"/api/documents/{sheets[2]['id']}/preview")
+    assert r.status_code == 200 and r.text.startswith("JOB SUMMARY") and "Mill Lane" in r.text and "Bakers Yard" not in r.text
+    assert "## Sheet: 101" in admin.get(f"/api/documents/{book['id']}/preview").text
+
+    # nothing changed → nothing re-read, the sheet documents are not "missing" from the folder listing
+    n = len(fake_claude.calls)
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    assert len(fake_claude.calls) == n
+    assert all(d["status"] == "done" for d in admin.get(f"/api/documents?source_ref={src['id']}&status=done").json())
+    # a job's sheet is deleted from the workbook → its document is removed, the others are re-read (the file changed)
+    _job_workbook(folder / "Vista Job Summary.xlsx", [("101", "Bakers Yard", 70000), ("103", "Mill Lane", 12500), ("104", "Quay St", 9000)])
+    st = os.stat(folder / "Vista Job Summary.xlsx"); os.utime(folder / "Vista Job Summary.xlsx", (st.st_atime + 100, st.st_mtime + 100))
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    names = {d["name"]: d["status"] for d in admin.get("/api/documents?limit=100").json()}
+    assert "Vista Job Summary.xlsx › 102" not in names and names["Vista Job Summary.xlsx › 101"] == "done" and len(fake_claude.calls) == n + 3
+    # Re-read on one sheet document re-reads just that sheet
+    r = admin.post(f"/api/documents/{sheets[0]['id']}/reprocess")
+    assert r.status_code == 200 and r.json()["status"] == "done" and len(fake_claude.calls) == n + 4
+    # cut down to two sheets the file is an ordinary workbook again: one document, the sheet rows go
+    _job_workbook(folder / "Vista Job Summary.xlsx", [("101", "Bakers Yard", 70000), ("103", "Mill Lane", 12500)])
+    os.utime(folder / "Vista Job Summary.xlsx", (st.st_atime + 200, st.st_mtime + 200))
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    names = {d["name"]: d["status"] for d in admin.get("/api/documents?limit=100").json()}
+    assert names["Vista Job Summary.xlsx"] == "done" and not any("›" in k for k in names)
+
+
 def test_drive_not_connected_is_reported_cleanly(admin, fresh_db, fake_claude):
     admin.post("/api/admin/google-client", json={"json_text": json.dumps(GOOGLE_CLIENT)})
     src = admin.post("/api/admin/sources", json={"kind": "drive", "name": "Unconnected"}).json()

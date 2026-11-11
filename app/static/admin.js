@@ -60,7 +60,7 @@
   function renderAll() {
     const o = state.overview;
     renderStatus(o.sync, o.settings);
-    renderSources(o.sources, o.settings);
+    renderSources(o.sources, o.settings, !!(o.sync && o.sync.running));
     renderClaude(o.settings, o.models);
     renderCompany(o.settings);
     renderGoogle(o.settings);
@@ -106,7 +106,7 @@
     $("#statusStrip").innerHTML = `
       <div class="strip-row">
         <div><b>${st.running ? esc(st.message || "Syncing…") : "Sync idle"}</b> <span class="badge ${lcls}" title="${esc(l.message || "")}">${esc(l.label || "AI: checking…")}</span>${st.running && st.current_file ? ` <span class="muted">— ${esc(st.current_file)}</span>` : ""}${!st.running && st.last_finished_at ? ` <span class="muted">— last finished ${when(st.last_finished_at)}</span>` : ""}</div>
-        <div class="muted small">${Object.entries(c).map(([k, v]) => `${label(k)}: ${v}`).join(" · ") || "no documents yet"}</div>
+        <div class="muted small">${Object.entries(c).map(([k, v]) => `${k === "split" ? "Workbooks read sheet by sheet" : label(k)}: ${v}`).join(" · ") || "no documents yet"}</div>
         <div class="actions"><button class="btn primary sm" id="syncAllBtn" ${st.running || !s.llm_ready ? "disabled" : ""}>Sync all sources</button> <button class="btn sm" id="watchNowBtn" ${st.running || !s.llm_ready ? "disabled" : ""} title="Ask SharePoint / Google Drive for changes right now">Check for changes</button>${st.running ? ` <button class="btn sm" id="stopSyncBtn" ${st.stop_requested ? "disabled" : ""} title="Finish the files being read now, then stop. Nothing already read is lost.">${st.stop_requested ? "Stopping…" : "Stop"}</button>` : ""}</div>
       </div>
       ${st.running ? `<div class="progress"><i style="width:${pct}%"></i></div><div class="muted small">${done} of ${total} files · read ${st.processed} · unchanged/skipped ${st.skipped} · errors ${st.errors}${st.queue && st.queue.length ? ` · waiting: ${st.queue.map(esc).join(", ")}` : ""}</div>` : ""}
@@ -126,7 +126,11 @@
     return `<span class="badge ${cls}">${text}</span>`;
   }
 
-  function renderSources(list, s) {
+  function renderSources(list, s, running = false) {
+    // While a sync runs every card control is greyed out: a second Sync would only queue behind it, and Edit / Remove /
+    // Disconnect would pull the folder from under the run. Everything comes back when the run finishes (poll → load()).
+    const busy = running ? "disabled" : "";
+    const busyTitle = running ? ` title="Wait for the running sync to finish (or press Stop above)"` : "";
     // "Add" buttons stay disabled until the matching app registration exists (also when there are no sources yet).
     $("#addDriveBtn").disabled = !s.has_google_client;
     $("#addDriveNote").innerHTML = s.has_google_client ? "" : `Upload the Google OAuth client under <a href="#google" data-go="google">Google setup</a> first.`;
@@ -144,20 +148,21 @@
             <div class="muted small">${src.doc_count} files known · <a href="/?source=${src.id}&status=done#documents">${src.done_count} read</a>${src.skipped_count ? ` · <a href="/?source=${src.id}&status=skipped#documents">${src.skipped_count} skipped</a>` : ""}${src.error_count ? ` · <a class="neg" href="/?source=${src.id}&status=error#documents">${src.error_count} errors</a>` : ""}${src.waiting_count ? ` · ${src.waiting_count} waiting` : ""} · last sync ${when(src.last_sync_at)}${isCloud(src) && src.connected ? ` · watch ${when(src.last_change_check)}` : ""}${src.last_error ? ` · <span class="neg">${esc(src.last_error)}</span>` : ""}</div>
             ${src.connected ? `<div class="small">${src.can_upload ? `<span class="ok">Uploads from the dashboard enabled</span>` : `<span class="missing">Uploads disabled — ${src.kind === "m365" && src.ms_link === "shared" ? "add a source for a specific folder to upload into it" : src.kind === "m365" && !src.ms_upload ? "turn on uploads (Edit) and reconnect" : "reconnect to grant the “create files” permission"}</span>`}</div>` : ""}
           </div>
-          <label class="switch" title="Include in syncs"><input type="checkbox" data-act="toggle" ${src.enabled ? "checked" : ""}><span></span></label>
+          <label class="switch" title="${running ? "Wait for the running sync to finish" : "Include in syncs"}"><input type="checkbox" data-act="toggle" ${src.enabled ? "checked" : ""} ${busy}><span></span></label>
         </div>
-        <div class="actions">
-          ${isCloud(src) ? `<a class="btn ${src.connected ? "" : "primary"} sm" href="/admin/sources/${src.id}/connect">${src.connected ? "Reconnect / change account" : src.kind === "m365" ? "Connect with Microsoft" : "Connect with Google"}</a>` : ""}
-          <button class="btn sm ${isCloud(src) && src.connected ? "primary" : ""}" data-act="sync" ${!s.llm_ready || !src.connected ? "disabled" : ""}>Sync now</button>
-          <button class="btn sm" data-act="force" ${!s.llm_ready || !src.connected ? "disabled" : ""} title="Re-read every file, even ones already processed">Full re-read</button>
-          <button class="btn sm" data-act="edit">Edit</button>
-          ${isCloud(src) && src.connected ? `<button class="btn sm" data-act="disconnect">Disconnect</button>` : ""}
-          <button class="btn sm danger-btn" data-act="remove">Remove</button>
+        <div class="actions"${running ? ' aria-busy="true"' : ""}>
+          ${isCloud(src) ? `<a class="btn ${src.connected ? "" : "primary"} sm ${running ? "is-disabled" : ""}" href="/admin/sources/${src.id}/connect"${running ? ' aria-disabled="true" tabindex="-1"' : ""}${busyTitle}>${src.connected ? "Reconnect / change account" : src.kind === "m365" ? "Connect with Microsoft" : "Connect with Google"}</a>` : ""}
+          <button class="btn sm ${isCloud(src) && src.connected ? "primary" : ""}" data-act="sync" ${!s.llm_ready || !src.connected ? "disabled" : busy}${busyTitle}>Sync now</button>
+          <button class="btn sm" data-act="force" ${!s.llm_ready || !src.connected ? "disabled" : busy} title="${running ? "Wait for the running sync to finish" : "Re-read every file, even ones already processed"}">Full re-read</button>
+          <button class="btn sm" data-act="edit" ${busy}${busyTitle}>Edit</button>
+          ${isCloud(src) && src.connected ? `<button class="btn sm" data-act="disconnect" ${busy}${busyTitle}>Disconnect</button>` : ""}
+          <button class="btn sm danger-btn" data-act="remove" ${busy}${busyTitle}>Remove</button>
           <a class="btn sm" href="/?source=${src.id}#documents" title="Open the owner dashboard's Documents tab showing only this source's files">View documents</a>
         </div>
       </div>`).join("");
     $$("#sourceList .source").forEach((card) => {
       const id = card.dataset.id, src = list.find((x) => String(x.id) === id);
+      if (running) { card.querySelectorAll("a.is-disabled").forEach((a) => a.addEventListener("click", (e) => e.preventDefault())); return; }  // nothing is wired while busy
       card.querySelector('[data-act="toggle"]').addEventListener("change", (e) => run(api(`/api/admin/sources/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: e.target.checked }) }), e.target.checked ? "Enabled" : "Disabled"));
       card.querySelector('[data-act="sync"]').addEventListener("click", () => run(api(`/api/admin/sources/${id}/sync`, { method: "POST" }), "Sync started"));
       card.querySelector('[data-act="force"]').addEventListener("click", () => { if (confirm(`Re-read every file in "${src.name}"? This costs API usage for each document.`)) run(api(`/api/admin/sources/${id}/sync?force=1`, { method: "POST" }), "Full re-read started"); });
@@ -527,7 +532,11 @@
     clearTimeout(state.timer);
     try {
       const st = await api("/api/sync/status");
-      if (state.overview) { state.overview.sync = st; renderStatus(st, state.overview.settings); renderLog(st); }
+      if (state.overview) {
+        const wasRunning = !!(state.overview.sync && state.overview.sync.running);
+        state.overview.sync = st; renderStatus(st, state.overview.settings); renderLog(st);
+        if (!!st.running !== wasRunning) renderSources(state.overview.sources, state.overview.settings, !!st.running);  // grey the cards out / back
+      }
       if (st.running) { state.wasSyncing = true; state.timer = setTimeout(poll, 2000); }
       else if (state.wasSyncing) { state.wasSyncing = false; await load(); }
     } catch (_) { /* logged out */ }

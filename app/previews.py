@@ -19,7 +19,7 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-from . import config, db, images, settings
+from . import config, db, images, settings, textract
 from .sources import FileContent, FileMeta, open_source
 
 PREVIEW_DIR = config.DATA_DIR / "previews"
@@ -62,7 +62,7 @@ def get(row: dict[str, Any]) -> tuple[bytes, str]:
     source = open_source(src)
     meta = FileMeta(source=row["source"], source_ref=row["source_ref"], source_id=row["source_id"], name=row["name"], mime=row["mime"],
                     folder=row["folder"], web_link=row["web_link"], size=row["size"], modified_at=row["modified_at"])
-    content = source.fetch(meta)
+    content = textract.fetch_part(source, meta)  # a sheet document previews as that sheet's text
     data, mime = to_viewable(content)
     if keep:
         PREVIEW_DIR.mkdir(parents=True, exist_ok=True)

@@ -82,7 +82,8 @@ h2 { font-size: 15px; }
 .btn:hover { background: var(--surface-2); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn.primary:hover { filter: brightness(1.08); }
-.btn:disabled { opacity: .5; cursor: default; }
+.btn:disabled, .btn.is-disabled { opacity: .5; cursor: default; pointer-events: none; }
+.switch input:disabled + span { opacity: .5; cursor: default; }
 .btn.sm { padding: 4px 9px; font-size: 12px; }
 .icon-btn { border: 0; background: none; padding: 6px; border-radius: 8px; color: var(--ink-2); }
 .icon-btn:hover { background: var(--surface-2); }

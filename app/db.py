@@ -412,12 +412,36 @@ def mark_missing(source_ref: int, present_source_ids: set[str]) -> int:
     """After a full listing: flag documents of this source that are no longer in it. Returns the count."""
     with connect() as conn:
         rows = conn.execute("SELECT id, source_id FROM documents WHERE source_ref=? AND status != 'removed'", (source_ref,)).fetchall()
-        gone = [r["id"] for r in rows if r["source_id"] not in present_source_ids]
+        # a sheet document ("<file>#sheet:<name>") lives as long as its workbook is listed
+        gone = [r["id"] for r in rows if r["source_id"].partition(SHEET_SEP)[0] not in present_source_ids]
         for doc_id in gone:
             conn.execute("UPDATE documents SET status='removed', error='file no longer in source' WHERE id=?", (doc_id,))
     if gone:
         _touch()
     return len(gone)
+
+
+def remove_missing_sheets(source_ref: int, file_source_id: str, present_sheet_ids: set[str]) -> int:
+    """Sheet documents of a workbook whose sheet is no longer in it are marked removed. Returns the count."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, source_id FROM documents WHERE source_ref=? AND source_id LIKE ? AND status != 'removed'",
+                            (source_ref, file_source_id + SHEET_SEP + "%")).fetchall()
+        gone = [r["id"] for r in rows if r["source_id"] not in present_sheet_ids]
+        for doc_id in gone:
+            conn.execute("UPDATE documents SET status='removed', error='sheet no longer in the workbook' WHERE id=?", (doc_id,))
+    if gone:
+        _touch()
+    return len(gone)
+
+
+def mark_split(doc_id: int, sheets: int) -> None:
+    """The workbook row of a file read sheet by sheet: holds no figures itself, points at its sheet documents."""
+    with connect() as conn:
+        conn.execute(
+            "UPDATE documents SET status='split', error=?, attempts=0, processed_at=?, processed_modified_at=modified_at WHERE id=?",
+            (f"workbook read as {sheets} separate sheets (one document each, listed under this file's name)", now_iso(), doc_id),
+        )
+    _touch()
 
 
 def needs_processing(doc_id: int, force: bool = False, retry_prefix: str | tuple[str, ...] | None = None) -> bool:
@@ -439,7 +463,7 @@ def needs_processing(doc_id: int, force: bool = False, retry_prefix: str | tuple
         return True
     if row["status"] == "skipped" and retry_prefix and (row["error"] or "").startswith(tuple(retry_prefix)):
         return True
-    if row["status"] in ("done", "skipped") and row["processed_modified_at"] == row["modified_at"]:
+    if row["status"] in ("done", "skipped", "split") and row["processed_modified_at"] == row["modified_at"]:
         return False
     if row["status"] == "error" and (row["attempts"] or 0) >= MAX_ATTEMPTS and row["processed_modified_at"] == row["modified_at"]:
         return False  # tried enough: rests as an error until the file changes, a Full re-read, Re-read or a hand entry
@@ -516,6 +540,7 @@ EDITABLE_FIELDS = {
 
 
 MANUAL_MODEL = "manual"  # ``documents.model`` for figures typed in by a person (a file no reader could read)
+SHEET_SEP = "#sheet:"  # source_id of a sheet document = "<file id>#sheet:<sheet name>" (textract.sheet_ref / split_ref)
 
 
 def update_document(doc_id: int, patch: dict[str, Any], derived: dict[str, Any]) -> None:

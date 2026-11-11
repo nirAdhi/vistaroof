@@ -19,6 +19,7 @@ from __future__ import annotations
 import io
 import logging
 
+from . import db
 from .sources import FileContent, FileMeta
 
 log = logging.getLogger(__name__)
@@ -34,9 +35,7 @@ _ODF_TEXT = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
 _ODF_TABLE = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}"
 
 
-def odf_to_text(data: bytes, spreadsheet: bool) -> str:
-    """OpenDocument (.odt / .ods, LibreOffice) → text. The file is a zip; ``content.xml`` holds the body.
-    Writer: paragraphs and headings in order. Calc: one line per row, cells joined with " | "."""
+def _odf_root(data: bytes):
     import zipfile
     from xml.etree.ElementTree import ParseError
 
@@ -44,24 +43,64 @@ def odf_to_text(data: bytes, spreadsheet: bool) -> str:
 
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
-            root = ET.fromstring(z.read("content.xml"))
+            return ET.fromstring(z.read("content.xml"))
     except (zipfile.BadZipFile, KeyError, ParseError, ValueError) as exc:  # defusedxml raises ValueError subclasses for forbidden constructs
         raise ValueError(f"could not read OpenDocument file ({type(exc).__name__})") from exc
-    parts: list[str] = []
+
+
+def _odf_sheets(data: bytes) -> list[tuple[str, list[str]]]:
+    """(sheet name, non-empty rows) of a .ods file."""
+    out = []
+    for table in _odf_root(data).iter(f"{_ODF_TABLE}table"):
+        rows = []
+        for row in table.iter(f"{_ODF_TABLE}table-row"):
+            line = _cells(tuple("".join(c.itertext()) for c in row if c.tag == f"{_ODF_TABLE}table-cell"))
+            if line:
+                rows.append(line)
+        out.append((table.get(f"{_ODF_TABLE}name", ""), rows))
+    return out
+
+
+def odf_to_text(data: bytes, spreadsheet: bool) -> str:
+    """OpenDocument (.odt / .ods, LibreOffice) → text. The file is a zip; ``content.xml`` holds the body.
+    Writer: paragraphs and headings in order. Calc: one line per row, cells joined with " | "."""
     if spreadsheet:
-        for table in root.iter(f"{_ODF_TABLE}table"):
-            parts.append(f"## Sheet: {table.get(f'{_ODF_TABLE}name', '')}")
-            for row in table.iter(f"{_ODF_TABLE}table-row"):
-                line = _cells(tuple("".join(c.itertext()) for c in row if c.tag == f"{_ODF_TABLE}table-cell"))
-                if line:
-                    parts.append(line)
-    else:
-        for el in root.iter():
-            if el.tag in (f"{_ODF_TEXT}p", f"{_ODF_TEXT}h"):
-                t = "".join(el.itertext()).strip()
-                if t:
-                    parts.append(t)
+        return "\n".join(f"## Sheet: {name}\n" + "\n".join(rows) for name, rows in _odf_sheets(data) if rows)
+    parts: list[str] = []
+    for el in _odf_root(data).iter():
+        if el.tag in (f"{_ODF_TEXT}p", f"{_ODF_TEXT}h"):
+            t = "".join(el.itertext()).strip()
+            if t:
+                parts.append(t)
     return "\n".join(parts)
+
+
+ODS_MIME = "application/vnd.oasis.opendocument.spreadsheet"
+
+
+def is_spreadsheet(mime: str) -> bool:
+    return mime.endswith("spreadsheetml.sheet") or mime == ODS_MIME
+
+
+def workbook_sheets(content: FileContent) -> list[tuple[str, str]]:
+    """(sheet name, text) for every non-empty sheet of an .xlsx / .ods workbook, rows joined with " | "."""
+    if content.data is None:
+        raise ValueError("office document has no content")
+    sheets: list[tuple[str, str]] = []
+    if content.mime == ODS_MIME:
+        for name, rows in _odf_sheets(content.data):
+            if rows:
+                sheets.append((name, "\n".join(rows)))
+        return sheets
+    import openpyxl
+
+    wb = openpyxl.load_workbook(io.BytesIO(content.data), read_only=True, data_only=True)
+    for ws in wb.worksheets:
+        rows = [_cells(row) for row in ws.iter_rows(values_only=True)]
+        rows = [r for r in rows if r]
+        if rows:  # an empty sheet adds nothing
+            sheets.append((ws.title, "\n".join(rows)))
+    return sheets
 
 
 def office_to_text(content: FileContent) -> str | None:
@@ -70,8 +109,8 @@ def office_to_text(content: FileContent) -> str | None:
         raise ValueError("office document has no content")
     if content.mime == "application/vnd.oasis.opendocument.text":
         return odf_to_text(content.data, spreadsheet=False)
-    if content.mime == "application/vnd.oasis.opendocument.spreadsheet":
-        return odf_to_text(content.data, spreadsheet=True)
+    if is_spreadsheet(content.mime):
+        return "\n".join(f"## Sheet: {name}\n{text}" for name, text in workbook_sheets(content))
     if content.mime.endswith("wordprocessingml.document"):
         import docx  # python-docx
 
@@ -81,19 +120,52 @@ def office_to_text(content: FileContent) -> str | None:
             for row in table.rows:
                 parts.append(" | ".join(c.text.strip() for c in row.cells))
         return "\n".join(parts)
-    if content.mime.endswith("spreadsheetml.sheet"):
-        import openpyxl
-
-        wb = openpyxl.load_workbook(io.BytesIO(content.data), read_only=True, data_only=True)
-        parts = []
-        for ws in wb.worksheets:
-            rows = [_cells(row) for row in ws.iter_rows(values_only=True)]
-            rows = [r for r in rows if r]
-            if rows:  # an empty sheet adds nothing
-                parts.append(f"## Sheet: {ws.title}")
-                parts.extend(rows)
-        return "\n".join(parts)
     return None
+
+
+# ---------------------------------------------------------------- workbooks with one record per sheet
+
+SHEET_SEP = db.SHEET_SEP  # a sheet document's source_id = "<file id>#sheet:<sheet name>"
+MIN_TEMPLATE_SHEETS = 3  # this many sheets starting with the same line = one record per sheet (a job summary workbook)
+
+
+def split_ref(source_id: str) -> tuple[str, str | None]:
+    """(file id, sheet name or None) of a document's source_id."""
+    base, sep, sheet = source_id.partition(SHEET_SEP)
+    return (base, sheet) if sep else (source_id, None)
+
+
+def sheet_ref(source_id: str, sheet: str) -> str:
+    return f"{source_id}{SHEET_SEP}{sheet}"
+
+
+def should_split(sheets: list[tuple[str, str]]) -> bool:
+    """Read a workbook sheet by sheet when its sheets are separate records: several sheets built from the same
+    template (same first line, e.g. "JOB SUMMARY" on every job's sheet), or more text than one document can be.
+    A two-sheet statement (data + summary) or an invoice with a "Rates" sheet stays one document."""
+    if len(sheets) < 2:
+        return False
+    if sum(len(t) for _, t in sheets) > MAX_TEXT_CHARS:
+        return True
+    first_lines: dict[str, int] = {}
+    for _, text in sheets:
+        line = text.split("\n", 1)[0].strip().lower()
+        first_lines[line] = first_lines.get(line, 0) + 1
+    return max(first_lines.values()) >= MIN_TEMPLATE_SHEETS
+
+
+def fetch_part(source, meta: FileMeta) -> FileContent:
+    """The file behind a document, or for a sheet document (source_id "<file>#sheet:<name>") just that sheet as text."""
+    base, sheet = split_ref(meta.source_id)
+    if sheet is None:
+        return source.fetch(meta)
+    from dataclasses import replace
+
+    content = source.fetch(replace(meta, source_id=base))
+    for name, text in workbook_sheets(content):
+        if name == sheet:
+            return FileContent(mime="text/plain", text=text)
+    raise ValueError(f"sheet {sheet!r} is no longer in the workbook")
 
 
 def _cells(row: tuple) -> str:

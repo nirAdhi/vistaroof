@@ -60,10 +60,22 @@ used their three attempts.
 
 Each source card in Admin shows how many of its files were read, skipped and failed; the numbers and
 "View documents" open the dashboard's Documents tab filtered to that source (and status) — the tab
-has an "All sources" selector for the same purpose. A spreadsheet or text export too long to be one
-document (over 300,000 characters after empty cells are trimmed, e.g. a job-costing workbook with a
-sheet per job) is skipped with that reason: enter the figures you need by hand, or save the relevant
-sheet as its own file.
+has an "All sources" selector for the same purpose. While a sync runs, every control on the source
+cards is greyed out (a second Sync would only queue behind it; Edit / Remove / Disconnect would pull
+the folder from under the run) until it finishes or is stopped.
+
+**Workbooks with one record per sheet** (a job-costing workbook with a sheet per job, every sheet
+from the same template) are read sheet by sheet: each sheet becomes its own document named
+"Book.xlsx › Sheet" with that sheet's text as its preview, and the workbook row shows as *Workbook*
+with a link to its sheet documents. The split happens when three or more sheets start with the same
+line, or when the whole workbook is longer than one document can be (300,000 characters after
+empty cells are trimmed). A sheet deleted from the workbook is removed on the next sync; a changed
+workbook re-reads its sheets; hand entries on a sheet document are kept. A two-sheet statement or
+an invoice with a "Rates" sheet stays one document. A job summary sheet is read as type *other*
+with the site and job number as the job, the contract value as the total and a one-line summary
+(contract value, cost, gross profit, balance due), so it never counts as income or spend. A single
+file still too long to read is skipped with that reason: enter the figures by hand, or save the
+relevant sheet as its own file.
 
 ## When the reader is off (and email alerts)
 
