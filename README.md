@@ -103,7 +103,12 @@ RCT tax, flagged), the site as the customer and "Site (job N)" as its project â€
 revenue, monthly figures, top customers, Companies and the Jobs tab come straight from the sheet; the sheet document itself is the job record (type other, counts
 nothing) with the contract value, final agreed figure, works to date per valuation and balance due in
 its summary. Reader shown as `jobsheet`, confidence 100 %. A hand correction on an invoice row is kept
-across syncs; a column removed from the sheet is removed from the ledger.
+across syncs; a column removed from the sheet is removed from the ledger. The workbook row's note
+says what was found ("279 separate sheets: 240 job summary sheets with 1,120 invoices, 31 of them
+with nothing invoiced yet; 39 other sheets read by the document reader") so a short list can be
+checked against the workbook. A job sheet a model read before the parser existed is parsed on the
+next ordinary sync (no Full re-read needed); columns headed Total / Total Paid / Gross Due /
+Retention Due are totals, not invoices, and an empty or 0.00 column is nothing invoiced.
 
 Previews of spreadsheets are HTML grids (`app/sheetview.py`), not text dumps: the workbook row shows
 every sheet with a sheet list, a sheet document its sheet, and a job summary sheet opens as a page â€”

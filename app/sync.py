@@ -371,6 +371,7 @@ def _process_workbook(source, meta: FileMeta, doc_id: int, sheets: list[tuple[st
     """A workbook whose sheets are separate records (one job summary per sheet): one document per sheet, each read on
     its own; the workbook's own row becomes ``split`` and points at them. Sheets that vanished are marked removed."""
     present: set[str] = set()
+    stats = {"jobs": 0, "invoices": 0, "empty": 0, "model": 0, "other": 0}
     for name, text in sheets:
         if _state["stop_requested"]:
             db.set_status(doc_id, "pending")
@@ -378,16 +379,34 @@ def _process_workbook(source, meta: FileMeta, doc_id: int, sheets: list[tuple[st
         child = sheet_meta(meta, name)
         present.add(child.source_id)
         cid = db.upsert_file_metadata(child.as_dict())
+        job = jobsheet.is_job_summary(text)
+        if job:
+            stats["jobs"] += 1
         if not db.needs_processing(cid, force=force):
-            _bump("skipped")
-            continue
+            # A job sheet that a *model* read before the parser existed is read again by the parser (exact figures,
+            # one invoice document per column); a hand-corrected sheet is left alone.
+            row = db.get_document(cid) or {}
+            if job and row.get("model") != jobsheet.MODEL and not row.get("overridden"):
+                log.info("%s: job sheet read by %s before, now parsed", child.name, row.get("model"))
+            else:
+                if job:
+                    ids = _sheet_invoice_ids(child, text)
+                    present.update(ids)
+                    stats["invoices"] += len(ids)
+                    stats["empty"] += 1 if not ids else 0
+                _bump("skipped")
+                continue
         _set(current_file=child.name)
         db.set_status(cid, "processing")
         try:
-            if jobsheet.is_job_summary(text):  # Cormac's job sheets: figures taken straight from the cells, no model
-                present.update(_read_job_sheet(child, cid, text, force))
+            if job:  # Cormac's job sheets: figures taken straight from the cells, no model
+                ids = _read_job_sheet(child, cid, text, force)
+                present.update(ids)
+                stats["invoices"] += len(ids)
+                stats["empty"] += 1 if not ids else 0
                 _bump("processed")
                 continue
+            stats["model"] += 1
             fields, model = extract.extract(child, FileContent(mime="text/plain", text=text))
             db.save_extraction(cid, fields, model)
             _bump("processed")
@@ -405,10 +424,23 @@ def _process_workbook(source, meta: FileMeta, doc_id: int, sheets: list[tuple[st
             db.mark_error(cid, msg)
             _note_error(child.name, msg)
     gone = db.remove_missing_sheets(meta.source_ref, meta.source_id, present)
-    db.mark_split(doc_id, len(sheets))
+    if stats["jobs"]:
+        detail = (f"{stats['jobs']} job summary sheets with {stats['invoices']} invoices"
+                  + (f", {stats['empty']} of them with nothing invoiced yet" if stats["empty"] else ""))
+        if len(sheets) - stats["jobs"]:
+            detail += f"; {len(sheets) - stats['jobs']} other sheets read by the document reader"
+    else:
+        detail = "read by the document reader"
+    db.mark_split(doc_id, len(sheets), detail)
     _bump("skipped")  # the workbook row itself holds no figures
-    log.info("%s: read as %d sheets (%d no longer present)", meta.name, len(sheets), gone)
+    log.info("%s: read as %d sheets (%s; %d no longer present)", meta.name, len(sheets), detail or "no job sheets", gone)
     return "split"
+
+
+def _sheet_invoice_ids(child: FileMeta, text: str) -> set[str]:
+    """The source_ids of the invoice documents a job sheet carries (to keep them when the sheet is unchanged)."""
+    parsed = jobsheet.parse(text) or {}
+    return {f"{child.source_id}{jobsheet.INV_SEP}{inv['key']}" for inv in parsed.get("invoices", [])}
 
 
 def _read_job_sheet(child: FileMeta, cid: int, text: str, force: bool) -> set[str]:

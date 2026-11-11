@@ -66,12 +66,20 @@ def _date(cell: str) -> str | None:
     m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", s)
     if m:
         return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
-    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", s)
+    m = re.match(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2}|\d{4})$", s)
     if m:
         a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        y = y + 2000 if y < 100 else y  # a typed "10/19/26"
         month, day = (a, b) if a <= 12 else (b, a)  # m/d/yyyy as the workbook shows; d/m when the first part cannot be a month
         try:
             return datetime(y, month, day).date().isoformat()
+        except ValueError:
+            return None
+    m = re.match(r"^(\d{1,2})\s+([A-Za-z]{3,9})\.?\s+(\d{2}|\d{4})$", s)  # "19 Oct 2026", "19 October 26"
+    if m:
+        try:
+            y = int(m.group(3))
+            return datetime.strptime(f"{m.group(1)} {m.group(2)[:3]} {y + 2000 if y < 100 else y}", "%d %b %Y").date().isoformat()
         except ValueError:
             return None
     return None
@@ -158,12 +166,14 @@ def parse(text: str) -> dict[str, Any] | None:
         h = next((i for i in range(p, min(p + 3, len(rows))) if len(rows[i]) > 1 and any(x.lower().startswith("invoice") for x in rows[i][1:])), -1)
         a = find("invoice amount", p)
         if h >= 0 and a >= 0:
-            total_col = next((c for c, x in enumerate(rows[h]) if x.lower() == "total"), len(rows[h]))
+            # the invoice columns end where the totals start: "Total", "Total Paid", "Gross Due", "Retention Due"…
+            total_col = next((c for c, x in enumerate(rows[h]) if c > 0 and x.lower().startswith(("total", "gross due", "retention due", "gross", "retention"))),
+                             max(len(rows[h]), len(rows[a])))
             d = find("date", a)
             paid = find("paid", a)
             for c in range(1, total_col):
                 amount = _num(cell(a, c))
-                if amount is None:
+                if not amount:  # an empty column, or 0.00: nothing invoiced there
                     continue
                 paid_cell = cell(paid, c) if paid >= 0 else ""
                 status = "paid" if paid_cell.strip("* ").upper().startswith("Y") else "unpaid" if paid_cell.strip("* ").upper().startswith("N") else "unknown"

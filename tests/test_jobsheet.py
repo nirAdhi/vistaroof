@@ -68,6 +68,47 @@ def test_the_sheet_text_is_parsed_exactly():
     q = jobsheet.parse(typed)
     assert q["invoices"][0]["date"] == "2021-03-16" and q["invoices"][0]["net"] == 6659.5 and q["invoiced_total"] == 6659.5
     assert jobsheet.parse("Some other sheet\n1 | 2") is None
+    # "Total Paid" / "Gross Due" / "Retention Due" are totals, not invoices; a 0.00 column is nothing invoiced; typed
+    # dates with two-digit years or dots, and "19 Oct 2026", are still dates
+    t = ("JOB SUMMARY\nSITE: |  | JOB NO:\nBrookwood |  | 116\nINVOICED/PAYMENT\n | Invoice 1 | Invoice 2 | Invoice 3 | Total Paid | Gross Due | Retention Due\n"
+         "INVOICE AMOUNT Excl VAT | 0 | 2,860.00 | 500 | 120,812.22 | 0 | 0\nDATE |  | 10/19/26 | 19.10.2026\nPAID  N/Y |  | y | N")
+    q = jobsheet.parse(t)
+    assert [(i["label"], i["net"], i["date"], i["payment_status"]) for i in q["invoices"]] == [("Invoice 2", 2860, "2026-10-19", "paid"), ("Invoice 3", 500, "2026-10-19", "unpaid")]
+    assert q["invoiced_total"] == 120812.22
+    assert jobsheet._date("19 Oct 2026") == "2026-10-19" and jobsheet._date("1 October 26") == "2026-10-01" and jobsheet._date("Oct") is None
+
+
+def test_job_sheets_read_by_a_model_before_the_parser_existed_are_parsed_on_the_next_sync(admin, fresh_db, fake_claude, tmp_path):
+    """The live workbook was first split while sheets still went to the model: those sheet rows are 'done' and the
+    file has not changed, so an ordinary sync used to leave them (and their invoices) unparsed. Now a plain Sync
+    now re-reads such sheets with the parser; a hand-corrected sheet is left as corrected."""
+    from app import db
+
+    folder = tmp_path / "Turnover"; folder.mkdir()
+    wb = openpyxl.Workbook(); wb.remove(wb.active)
+    _job_sheet(wb.create_sheet("101"), "Bakers Yard", "101", BAKERS)
+    _job_sheet(wb.create_sheet("102"), "Oak Drive", "102", [("Invoice 1", 12000, datetime(2026, 2, 3), "Y")])
+    _job_sheet(wb.create_sheet("103"), "Mill Lane", "103", [("Invoice 1", 900, datetime(2026, 2, 3), "N")])
+    wb.save(folder / "Vista Job Summary.xlsx")
+    src = admin.post("/api/admin/sources", json={"kind": "local", "name": "VistaTurnover", "local_folder": str(folder)}).json()
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    docs = {d["name"]: d for d in admin.get("/api/documents?limit=100&from=2000-01-01").json()}
+    # pretend sheets 101 and 102 were read by the model in the old days: no invoice rows, model != jobsheet; 103 corrected by hand
+    with db.connect() as conn:
+        for no in ("101", "102"):
+            conn.execute("UPDATE documents SET model='claude-opus-5-5', doc_type='other', project=NULL WHERE id=?", (docs[f"Vista Job Summary.xlsx › {no}"]["id"],))
+            conn.execute("DELETE FROM documents WHERE name LIKE ?", (f"Vista Job Summary.xlsx › {no} › %",))
+        conn.execute("UPDATE documents SET error='workbook read as 3 separate sheets (one document each, listed under this file''s name)' WHERE id=?",
+                     (docs["Vista Job Summary.xlsx"]["id"],))  # the note the first release wrote
+    assert admin.patch(f"/api/documents/{docs['Vista Job Summary.xlsx › 103']['id']}", json={"summary": "checked by Cormac"}).status_code == 200
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()  # no file change, no Full re-read
+    assert fake_claude.calls == []
+    docs = {d["name"]: d for d in admin.get("/api/documents?limit=100&from=2000-01-01").json()}
+    assert docs["Vista Job Summary.xlsx › 101"]["model"] == "jobsheet" and docs["Vista Job Summary.xlsx › 101"]["project"] == "Bakers Yard (job 101)"
+    assert docs["Vista Job Summary.xlsx › 101 › Invoice 2"]["net_amount"] == 6659.5 and docs["Vista Job Summary.xlsx › 102 › Invoice 1"]["net_amount"] == 12000
+    assert docs["Vista Job Summary.xlsx › 103"]["summary"] == "checked by Cormac" and docs["Vista Job Summary.xlsx › 103 › Invoice 1"]["net_amount"] == 900
+    book = docs["Vista Job Summary.xlsx"]
+    assert book["status"] == "split" and "3 job summary sheets with 6 invoices" in book["error"]
 
 
 def test_a_sheet_invoice_that_doubles_an_invoice_document_is_counted_once(admin, fresh_db, fake_claude, tmp_path):
@@ -118,7 +159,7 @@ def test_job_sheets_become_sales_invoices_in_the_ledger_without_a_model(admin, f
     assert fake_claude.calls == []  # nothing went to a model
     docs = {d["name"]: d for d in admin.get("/api/documents?limit=100&from=2000-01-01").json()}
     book = docs["Vista Job Summary.xlsx"]
-    assert book["status"] == "split"
+    assert book["status"] == "split" and "3 job summary sheets with 6 invoices, 1 of them with nothing invoiced yet" in book["error"]
     job = docs["Vista Job Summary.xlsx › 101"]
     assert job["status"] == "done" and job["model"] == "jobsheet" and job["doc_type"] == "other" and job["treatment"] == "none"
     assert job["project"] == "Bakers Yard (job 101)" and job["total"] == 70000 and job["issue_date"] == "2025-04-07"

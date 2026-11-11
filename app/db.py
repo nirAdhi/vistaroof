@@ -467,12 +467,14 @@ def remove_missing_sheets(source_ref: int, file_source_id: str, present_sheet_id
     return len(gone)
 
 
-def mark_split(doc_id: int, sheets: int) -> None:
-    """The workbook row of a file read sheet by sheet: holds no figures itself, points at its sheet documents."""
+def mark_split(doc_id: int, sheets: int, detail: str = "") -> None:
+    """The workbook row of a file read sheet by sheet: holds no figures itself, points at its sheet documents.
+    ``detail`` says what the sheets were (job summaries, invoices found) so the owner can check nothing was missed."""
     with connect() as conn:
         conn.execute(
             "UPDATE documents SET status='split', error=?, attempts=0, processed_at=?, processed_modified_at=modified_at WHERE id=?",
-            (f"workbook read as {sheets} separate sheets (one document each, listed under this file's name)", now_iso(), doc_id),
+            (f"workbook read as {sheets} separate sheets (one document each, listed under this file's name)" + (f": {detail}" if detail else ""),
+             now_iso(), doc_id),
         )
     _touch()
 
@@ -498,6 +500,8 @@ def needs_processing(doc_id: int, force: bool = False, retry_prefix: str | tuple
         return True
     if row["status"] == "skipped" and (row["error"] or "").startswith(TOO_SLOW_PREFIX) and (row["attempts"] or 0) < MAX_ATTEMPTS:
         return True  # the model ran out of time on it: worth another go (less queue, no model swap), up to MAX_ATTEMPTS
+    if row["status"] == "split" and ": " not in (row["error"] or ""):
+        return True  # split before the job-sheet parser existed (no detail in the note): walk its sheets again once
     if row["status"] in ("done", "skipped", "split") and row["processed_modified_at"] == row["modified_at"]:
         return False
     if row["status"] == "error" and (row["attempts"] or 0) >= MAX_ATTEMPTS and row["processed_modified_at"] == row["modified_at"]:
