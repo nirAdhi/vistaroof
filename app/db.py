@@ -152,7 +152,8 @@ _MIGRATIONS = {
     "sources": [("drive_page_token", "TEXT"), ("last_change_check", "TEXT"),
                 # Microsoft 365 sources: the pasted link, its resolved location (JSON), tenant override, upload flag
                 ("ms_link", "TEXT"), ("ms_location", "TEXT"), ("ms_tenant", "TEXT"), ("ms_upload", "INTEGER DEFAULT 1"),
-                ("position", "INTEGER")],  # card / sync order (Admin ▲ ▼); NULL = after the positioned ones, by id
+                ("position", "INTEGER"),  # card / sync order (Admin ▲ ▼); NULL = after the positioned ones, by id
+                ("last_change_found", "TEXT")],  # when the watcher last saw a change in this source (and started its sync)
     "documents": [("uploaded_by", "TEXT"), ("attempts", "INTEGER NOT NULL DEFAULT 0")],
     "sync_runs": [("source_ref", "INTEGER"), ("source_name", "TEXT"), ("force", "INTEGER DEFAULT 0"), ("message", "TEXT"),
                   ("removed", "INTEGER DEFAULT 0"), ("trigger", "TEXT"), ("files", "TEXT")],
@@ -185,7 +186,7 @@ _TABLES = {"settings", "sources", "documents", "sync_runs", "documents_v1"}
 # turn a dict key into SQL.
 _SOURCE_COLUMNS = {"name", "enabled", "drive_folder_id", "local_folder", "token_json", "account_email", "last_sync_at",
                    "last_status", "last_error", "drive_page_token", "last_change_check",
-                   "ms_link", "ms_location", "ms_tenant", "ms_upload", "position"}
+                   "ms_link", "ms_location", "ms_tenant", "ms_upload", "position", "last_change_found"}
 _RUN_COLUMNS = {"finished_at", "total", "processed", "skipped", "errors", "removed", "status", "message", "files"}
 _USER_COLUMNS = {"name", "role", "active", "password_hash"}
 USER_ROLES = ("user", "admin")

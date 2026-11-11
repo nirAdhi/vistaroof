@@ -936,8 +936,10 @@
     const pct = st.total ? Math.round((st.processed + st.skipped + st.errors) / st.total * 100) : 0;
     const c = st.counts || {};
     const runs = (st.runs || []).map((r) => `<tr><td>${esc((r.started_at || "").replace("T", " ").slice(0, 16))}</td><td>${esc(r.source_name || r.source)}</td><td class="muted small">${esc(TRIGGER[r.trigger] || label(r.trigger))}</td><td class="num">${r.total}</td><td class="num">${r.processed}</td><td class="num">${r.skipped}</td><td class="num">${r.errors}</td><td>${esc(label(r.status))}</td></tr>`).join("");
-    const enabled = (state.config.sources || []).filter((s) => s.enabled && s.connected).length;
+    const watched = (state.config.sources || []).filter((s) => s.enabled && s.connected);
+    const enabled = watched.length;
     const watch = state.config.watch_interval_seconds;
+    const watchWhat = watched.length ? watched.map((s) => `<b>${esc(s.name)}</b>`).join(", ") : "SharePoint / Drive";
     renderAi(st.llm);
     const l = st.llm || {}, lcls = AI_CLASS[l.state] || "", readBy = Object.entries(st.read_by || {});
     const reader = l.provider === "ollama" ? `Ollama · model <b>${esc(l.model)}</b> at <b>${esc(l.url)}</b> (your own server — documents never leave the network)`
@@ -958,7 +960,7 @@
         <button class="btn primary" id="syncNow" ${st.running || !enabled || !state.config.llm_ready ? "disabled" : ""}>Sync new &amp; changed files</button>
         <button class="btn" id="syncForce" ${st.running || !enabled || !state.config.llm_ready ? "disabled" : ""} title="Re-read every file, even ones already processed">Full re-read</button>
       </div>
-      ${state.config.llm_ready && enabled ? `<p class="muted small"><span class="live-dot"></span>${watch > 0 ? `Watching SharePoint / Drive for changes every ${watch >= 60 ? Math.round(watch / 60) + " min" : watch + " s"}${st.last_watch_at ? ` · last check ${new Date(st.last_watch_at).toLocaleTimeString("en-IE", { hour: "2-digit", minute: "2-digit" })}` : ""}. New files appear here automatically.` : "Automatic watching is off (Admin → Claude API)."}</p>` : ""}
+      ${state.config.llm_ready && enabled ? `<p class="muted small"><span class="live-dot"></span>${watch > 0 ? `Watching ${watchWhat} for changes every ${watch >= 60 ? Math.round(watch / 60) + " min" : watch + " s"}${st.last_watch_at ? ` · last check ${new Date(st.last_watch_at).toLocaleTimeString("en-IE", { hour: "2-digit", minute: "2-digit" })}` : ""}. Each source is asked separately in every check, and only the one where something changed is synced. New files appear here automatically.` : "Automatic watching is off (Admin → Claude API)."}</p>` : ""}
       ${!state.config.llm_ready ? `<p class="muted small">No document reader yet — add a Claude API key in <a href="/admin#claude">Admin → Claude API</a>, or set LLM_PROVIDER=ollama in .env.</p>` : ""}
       ${!enabled ? `<p class="muted small">No connected sources yet — add a SharePoint / OneDrive folder, Google Drive or local folder in <a href="/admin#sources">Admin → Sources</a>.</p>` : ""}
       ${st.recent_errors && st.recent_errors.length ? `<h3 style="font-size:13px;margin:14px 0 6px">Recent errors</h3><ul class="small" style="padding-left:18px">${st.recent_errors.map((e) => `<li><b>${esc(e.file)}</b>: ${esc(e.error)}</li>`).join("")}</ul>` : ""}
@@ -996,7 +998,7 @@
         <span class="chip ${s.kind === "local" ? "pipe" : "in"}">${kindLabel(s.kind)}</span><b>${esc(s.name)}</b>
         <span class="muted small">${s.kind === "local" ? esc(s.local_folder) : esc(s.account_email || "not signed in")}</span>
         <span class="spacer"></span>
-        <span class="muted small"><a href="#" data-src-docs="${s.id}" data-status="done">${s.done_count} read</a>${s.skipped_count ? ` · <a href="#" data-src-docs="${s.id}" data-status="skipped">${s.skipped_count} skipped</a>` : ""}${s.error_count ? ` · <a href="#" class="neg" data-src-docs="${s.id}" data-status="error">${s.error_count} errors</a>` : ""} · last sync ${when(s.last_sync_at)}</span>
+        <span class="muted small"><a href="#" data-src-docs="${s.id}" data-status="done">${s.done_count} read</a>${s.skipped_count ? ` · <a href="#" data-src-docs="${s.id}" data-status="skipped">${s.skipped_count} skipped</a>` : ""}${s.error_count ? ` · <a href="#" class="neg" data-src-docs="${s.id}" data-status="error">${s.error_count} errors</a>` : ""} · last sync ${when(s.last_sync_at)}${s.kind !== "local" && s.connected ? ` · checked for changes ${when(s.last_change_check)} · last change found ${when(s.last_change_found)}` : ""}</span>
         <span class="status ${s.last_status === "ok" || s.last_status === "connected" || s.last_status === "ready" ? "paid" : s.last_status === "failed" ? "overdue" : "unknown"}">${label(s.enabled ? s.last_status : "disabled")}</span>
         ${sourceLine(s, state.lastSync)}
       </div>`).join("")}</div>` : `<div class="empty">No sources connected yet</div>`) +

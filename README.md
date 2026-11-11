@@ -47,7 +47,10 @@ The first sync of a source lists every file and reads each one with the document
 nothing is re-read unless it changed: the watcher asks SharePoint / OneDrive / Google Drive for
 *changes* every `watch_interval_seconds` (Admin → Document reader; default 120 s, minimum 10 s)
 using their change feeds (Microsoft Graph delta / Drive changes). A check is one small request per
-folder and costs no GPU or API usage; only a new or modified file is downloaded and read. The
+folder and costs no GPU or API usage; only a new or modified file is downloaded and read. Every
+check asks each connected source separately and syncs only the one where something changed; the
+Sync tab names the sources being watched, and each card shows when it was last checked and when
+a change was last found. The
 dashboard notices new figures within 20 s and refreshes itself. "Full re-read" re-reads everything
 and is only for when the reader or its prompt changed.
 

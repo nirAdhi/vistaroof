@@ -474,7 +474,8 @@ def check_for_changes() -> list[int]:
             # Google Drive and Microsoft 365 both expose changes_since(cursor) -> (changed, new_cursor)
             cloud = open_source(src)
             has_changes, token = cloud.changes_since(src.get("drive_page_token"))
-            db.update_source(src["id"], drive_page_token=token, last_change_check=db.now_iso())
+            now = db.now_iso()
+            db.update_source(src["id"], drive_page_token=token, last_change_check=now, **({"last_change_found": now} if has_changes else {}))
             if has_changes:
                 changed.append(src["id"])
         except Exception as exc:

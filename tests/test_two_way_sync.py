@@ -119,6 +119,8 @@ def test_watcher_picks_up_new_and_deleted_drive_files(admin, fresh_db, fake_clau
     drive.remove_file("f2")
     assert admin.post("/api/admin/watch-now").json()["changed_sources"] == [src["id"]]
     wait_sync()
+    s = db.get_source(src["id"])  # the card says when this folder was last asked and when a change was last found
+    assert s["last_change_check"] and s["last_change_found"] == s["last_change_check"]
     names = [d["name"] for d in admin.get("/api/documents").json()]
     assert "Chadwicks bill.pdf" not in names and "INV-1.pdf" in names
     removed = admin.get("/api/documents?status=removed").json()
