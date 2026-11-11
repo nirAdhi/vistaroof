@@ -154,7 +154,7 @@ _MIGRATIONS = {
                 ("ms_link", "TEXT"), ("ms_location", "TEXT"), ("ms_tenant", "TEXT"), ("ms_upload", "INTEGER DEFAULT 1")],
     "documents": [("uploaded_by", "TEXT"), ("attempts", "INTEGER NOT NULL DEFAULT 0")],
     "sync_runs": [("source_ref", "INTEGER"), ("source_name", "TEXT"), ("force", "INTEGER DEFAULT 0"), ("message", "TEXT"),
-                  ("removed", "INTEGER DEFAULT 0"), ("trigger", "TEXT")],
+                  ("removed", "INTEGER DEFAULT 0"), ("trigger", "TEXT"), ("files", "TEXT")],
 }
 
 
@@ -185,7 +185,7 @@ _TABLES = {"settings", "sources", "documents", "sync_runs", "documents_v1"}
 _SOURCE_COLUMNS = {"name", "enabled", "drive_folder_id", "local_folder", "token_json", "account_email", "last_sync_at",
                    "last_status", "last_error", "drive_page_token", "last_change_check",
                    "ms_link", "ms_location", "ms_tenant", "ms_upload"}
-_RUN_COLUMNS = {"finished_at", "total", "processed", "skipped", "errors", "removed", "status", "message"}
+_RUN_COLUMNS = {"finished_at", "total", "processed", "skipped", "errors", "removed", "status", "message", "files"}
 _USER_COLUMNS = {"name", "role", "active", "password_hash"}
 USER_ROLES = ("user", "admin")
 
@@ -280,12 +280,26 @@ def list_sources(include_secrets: bool = False) -> list[dict[str, Any]]:
                       (SELECT COUNT(*) FROM documents d WHERE d.source_ref = s.id AND d.status IN ('pending', 'processing')) AS waiting_count
                FROM sources s ORDER BY s.id"""
         ).fetchall()
+        # the last run of each source, for the card's "100% complete · N read · finished at" line
+        last = {r["source_ref"]: dict(r) for r in conn.execute(
+            "SELECT * FROM sync_runs WHERE id IN (SELECT MAX(id) FROM sync_runs WHERE source_ref IS NOT NULL GROUP BY source_ref)"
+        ).fetchall()}
     out = []
     for r in rows:
         d = dict(r)
         d["connected"] = d["kind"] == "local" or bool(d.get("token_json"))
         if not include_secrets:
             d.pop("token_json", None)
+        run = last.get(d["id"])
+        if run:
+            try:
+                files = json.loads(run.get("files") or "[]")
+            except ValueError:
+                files = []
+            d["last_run"] = {k: run.get(k) for k in ("started_at", "finished_at", "status", "trigger", "total", "processed", "skipped", "errors", "removed", "message")}
+            d["last_run"]["files"] = files
+        else:
+            d["last_run"] = None
         out.append(d)
     return out
 

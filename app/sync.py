@@ -29,6 +29,7 @@ Debugging tips
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -46,7 +47,42 @@ _state: dict[str, Any] = {
     "running": False, "phase": "idle", "message": "", "trigger": None, "current_source": None, "current_file": None,
     "queue": [], "total": 0, "processed": 0, "skipped": 0, "errors": 0, "removed": 0, "recent_errors": [],
     "last_finished_at": None, "last_watch_at": None, "stop_requested": False, "stop_reason": None,
+    "current_source_id": None, "sources": {},  # per-source progress of the current run, see _src()
 }
+RECENT_FILES = 8  # names of the last files read per source (card: "recently read: …")
+
+
+def _src(source_id: int | None) -> dict[str, Any] | None:
+    """The live progress entry of a source in the current run: how many files were checked, how many were new or
+    changed and read, which are being read right now, the last few read. Shown on that source's card."""
+    return _state["sources"].get(source_id) if source_id is not None else None
+
+
+def _src_update(source_id: int | None, **kw: Any) -> None:
+    with _lock:
+        entry = _state["sources"].get(source_id)
+        if entry is not None:
+            entry.update(kw)
+
+
+def _src_bump(source_id: int | None, key: str) -> None:
+    with _lock:
+        entry = _state["sources"].get(source_id)
+        if entry is not None:
+            entry[key] += 1
+
+
+def _src_reading(source_id: int | None, name: str, start: bool, result: str | None = None) -> None:
+    """Track the files in flight (start=True) and the last few finished ones, per source."""
+    with _lock:
+        entry = _state["sources"].get(source_id)
+        if entry is None:
+            return
+        if start:
+            entry["reading"] = [*entry["reading"], name][-10:]
+        else:
+            entry["reading"] = [n for n in entry["reading"] if n != name]
+            entry["recent"] = [*entry["recent"], {"file": name, "result": result}][-RECENT_FILES:]
 ADMIN_STOP = "stopped by the admin"
 _rerun: dict[int | None, bool] = {}  # source id -> force; None = all enabled sources
 # Why a run started, for the status line: a sync that starts "by itself" is the watcher reacting to a change
@@ -63,6 +99,7 @@ def status() -> dict[str, Any]:
         snap = dict(_state)
         snap["recent_errors"] = list(_state["recent_errors"])[-10:]
         snap["queue"] = list(_state["queue"])
+        snap["sources"] = {sid: {**e, "reading": list(e["reading"]), "recent": list(e["recent"])} for sid, e in _state["sources"].items()}
     snap["counts"] = db.status_counts()
     snap["runs"] = db.last_runs(8)
     snap["version"] = db.ledger_version()
@@ -107,7 +144,10 @@ def start(source_ids: list[int] | None = None, force: bool = False, wait: bool =
         _state.update({
             "running": True, "phase": "starting", "message": "Starting…", "trigger": trigger, "current_source": None,
             "current_file": None, "queue": [s["name"] for s in sources], "total": 0, "processed": 0, "skipped": 0, "errors": 0,
-            "removed": 0, "recent_errors": [], "stop_requested": False, "stop_reason": None,
+            "removed": 0, "recent_errors": [], "stop_requested": False, "stop_reason": None, "current_source_id": None,
+            "sources": {s["id"]: {"name": s["name"], "phase": "queued", "trigger": trigger, "total": 0, "checked": 0, "read": 0,
+                                  "unchanged": 0, "skipped": 0, "errors": 0, "to_read": 0, "reading": [], "recent": [], "started_at": None}
+                        for s in sources},
         })
     if not sources:
         _set(running=False, phase="done", message="Nothing to sync: no enabled sources", last_finished_at=db.now_iso())
@@ -186,13 +226,16 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
     """Full listing + processing of one source, recorded as one sync_runs row."""
     run_id = db.start_run(src["kind"], src["id"], src["name"], force, trigger)
     why = TRIGGER_WHY.get(trigger)
-    _set(phase="listing", current_source=src["name"], message=f"Listing files in {src['name']}…" + (f" ({why})" if why else ""))
+    _set(phase="listing", current_source=src["name"], current_source_id=src["id"],
+         message=f"Listing files in {src['name']}…" + (f" ({why})" if why else ""))
+    _src_update(src["id"], phase="listing", started_at=db.now_iso())
     db.update_source(src["id"], last_status="syncing", last_error=None)
     try:
         source = open_source(src)
         files = list(source.list_files())
         _bump("total", len(files))
         _set(phase="processing", message=f"{len(files)} files in {src['name']}")
+        _src_update(src["id"], phase="processing", total=len(files))
         db.update_run(run_id, total=len(files))
         base = dict(processed=_state["processed"], skipped=_state["skipped"], errors=_state["errors"])
         # Skipped files worth another look: photos / scans once a vision reader exists, and file types the app has
@@ -217,14 +260,17 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
                     for f in futures:
                         f.cancel()  # files not started yet; the ones in flight finish normally
                     break
+        prog = _src(src["id"]) or {}
+        files_json = json.dumps([r["file"] for r in prog.get("recent", [])])  # the card's "recently read" after the run
         if _state["stop_requested"]:  # the pool has drained: count the files that were in flight too
             reason = _state["stop_reason"] or ADMIN_STOP
             by_admin = reason == ADMIN_STOP
-            db.update_run(run_id, finished_at=db.now_iso(), status="stopped", message=reason,
+            db.update_run(run_id, finished_at=db.now_iso(), status="stopped", message=reason, files=files_json,
                           processed=_state["processed"] - base["processed"], skipped=_state["skipped"] - base["skipped"],
                           errors=_state["errors"] - base["errors"])
             db.update_source(src["id"], last_sync_at=db.now_iso(), last_status="stopped" if by_admin else "failed",
                              last_error=None if by_admin else reason)
+            _src_update(src["id"], phase="stopped")
             log.info("%s: sync stopped (%s) after %d file(s)", src["name"], reason, _state["processed"] - base["processed"])
             return
         removed = db.mark_missing(src["id"], {m.source_id for m in files})
@@ -232,13 +278,15 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
             _bump("removed", removed)
             log.info("%s: %d file(s) no longer in source, hidden from the ledger", src["name"], removed)
         n_err = _state["errors"] - base["errors"]
-        db.update_run(run_id, finished_at=db.now_iso(), status="done", removed=removed)
+        db.update_run(run_id, finished_at=db.now_iso(), status="done", removed=removed, files=files_json)
         db.update_source(src["id"], last_sync_at=db.now_iso(), last_status="ok" if not n_err else "errors",
                          last_error=None if not n_err else f"{n_err} file(s) failed")
+        _src_update(src["id"], phase="done")
     except Exception as exc:
         msg = f"{type(exc).__name__}: {str(exc)[:400]}"
         db.update_run(run_id, finished_at=db.now_iso(), status="failed", message=msg)
         db.update_source(src["id"], last_sync_at=db.now_iso(), last_status="failed", last_error=msg)
+        _src_update(src["id"], phase="failed")
         _note_error(src["name"], msg)
         log.exception("sync of %s failed", src["name"])
 
@@ -248,36 +296,40 @@ def _process_one(source, meta: FileMeta, force: bool, retry_prefix: str | tuple[
     if _state["stop_requested"]:
         return "stopped"  # not even recorded: the next sync sees it as a new file
     doc_id = db.upsert_file_metadata(meta.as_dict())
+    sid = meta.source_ref
     if not db.needs_processing(doc_id, force=force, retry_prefix=retry_prefix):
         _bump("skipped")
+        _src_bump(sid, "checked"); _src_bump(sid, "unchanged")
         return "unchanged"
     _set(current_file=meta.name)
+    _src_bump(sid, "to_read"); _src_reading(sid, meta.name, True)
+    result = "error"
     try:
         if meta.mime not in SUPPORTED_MIMES:
             db.mark_skipped(doc_id, f"unsupported file type ({meta.mime})")
             _bump("skipped")
-            return "skipped"
+            return (result := "skipped")
         max_mb = settings.get_float("max_file_mb", 25)
         if meta.size and meta.size > max_mb * 1024 * 1024:
             db.mark_skipped(doc_id, f"file larger than {max_mb:g} MB")
             _bump("skipped")
-            return "skipped"
+            return (result := "skipped")
         db.set_status(doc_id, "processing")
         content = textract.fetch_part(source, meta)
         if textract.is_spreadsheet(content.mime):
             sheets = textract.workbook_sheets(content)
             if textract.should_split(sheets):
-                return _process_workbook(source, meta, doc_id, sheets, force)
+                return (result := _process_workbook(source, meta, doc_id, sheets, force))
             db.remove_missing_sheets(meta.source_ref, meta.source_id, set())  # a workbook that no longer splits: drop its old sheet rows
         fields, model = extract.extract(meta, content)
         db.save_extraction(doc_id, fields, model)
         _bump("processed")
         log.debug("read %s -> %s %s", meta.name, fields.get("doc_type"), fields.get("total"))
-        return "done"
+        return (result := "done")
     except ValueError as exc:  # unsupported / too large / unreadable
         db.mark_skipped(doc_id, str(exc))
         _bump("skipped")
-        return "skipped"
+        return (result := "skipped")
     except extract.ApiUnavailable as exc:  # bad key / no credit: not this file's fault, stop the whole run
         db.set_status(doc_id, "pending")  # read on the next sync, no error row
         _note_error(meta.name, str(exc))
@@ -289,6 +341,10 @@ def _process_one(source, meta: FileMeta, force: bool, retry_prefix: str | tuple[
         _note_error(meta.name, msg)
         log.warning("failed to read %s (attempt %d): %s", meta.name, attempts, msg)
         return "error"
+    finally:
+        _src_bump(sid, "checked")
+        _src_bump(sid, {"done": "read", "split": "read", "skipped": "skipped", "stopped": "skipped"}.get(result, "errors"))
+        _src_reading(sid, meta.name, False, result)
 
 
 def sheet_meta(meta: FileMeta, sheet: str) -> FileMeta:

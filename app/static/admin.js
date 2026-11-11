@@ -126,6 +126,42 @@
     return `<span class="badge ${cls}">${text}</span>`;
   }
 
+  const pct = (a, b) => b ? Math.min(100, Math.round(a / b * 100)) : 0;
+  const nf = (n) => (n || 0).toLocaleString("en-IE");
+  const fileList = (names, lead) => names && names.length ? `<div class="muted small">${lead}: ${names.map(esc).join(", ")}</div>` : "";
+  /** One source's own progress: live while its part of the run goes (files checked, new / changed ones being read, the last
+   *  few read), and after a run a "100% complete" line with the last run's figures — so the owner can tell a big folder is
+   *  fully done, and when the watcher picks up a couple of new uploads, that only those are being read. */
+  function sourceProgress(src, st) {
+    const live = st && st.running && st.sources && st.sources[src.id];
+    if (live && (live.phase === "listing" || live.phase === "processing")) {
+      const why = TRIGGER[live.trigger] ? ` · ${TRIGGER[live.trigger].toLowerCase()}` : "";
+      if (live.phase === "listing") return `<div class="src-progress live"><div class="progress"><i style="width:2%"></i></div><div class="small"><b>Listing the files in this folder…</b>${why}</div></div>`;
+      const p = pct(live.checked, live.total);
+      const changed = live.to_read ? `<b>${nf(live.to_read)} new or changed</b> (${nf(live.read)} read${live.skipped ? `, ${nf(live.skipped)} skipped` : ""}${live.errors ? `, <span class="neg">${nf(live.errors)} failed</span>` : ""})` : "no new or changed files so far";
+      return `<div class="src-progress live"><div class="progress"><i style="width:${p}%"></i></div>
+        <div class="small"><b>Syncing ${p}%</b> — ${nf(live.checked)} of ${nf(live.total)} files checked · ${changed}${why}</div>
+        ${fileList(live.reading, "Reading now")}${fileList(live.recent.map((r) => r.file).reverse(), "Just read")}</div>`;
+    }
+    if (live && live.phase === "queued") return `<div class="src-progress"><div class="small muted">Waiting its turn — syncs after ${esc(st.current_source || "the current source")}.</div></div>`;
+    const r = src.last_run;
+    if (!r) return "";
+    const why = TRIGGER[r.trigger] ? ` · started by: ${TRIGGER[r.trigger].toLowerCase()}` : "";
+    if (r.status === "done") {
+      return `<div class="src-progress complete"><div class="progress"><i style="width:100%"></i></div>
+        <div class="small"><b>✓ 100% complete</b> — all ${nf(r.total)} files checked · ${nf(r.processed)} new or changed read · ${nf(r.skipped)} unchanged or skipped${r.errors ? ` · <span class="neg">${nf(r.errors)} failed</span>` : ""}${r.removed ? ` · ${nf(r.removed)} removed` : ""} · finished ${when(r.finished_at)}${why}</div>
+        ${fileList(r.files.slice().reverse(), r.processed ? "Last files read" : "")}</div>`;
+    }
+    const done = (r.processed || 0) + (r.skipped || 0) + (r.errors || 0), p = pct(done, r.total);
+    if (r.status === "stopped") return `<div class="src-progress stopped"><div class="progress"><i style="width:${p}%"></i></div><div class="small"><b>Stopped at ${p}%</b>${r.message && r.message !== "stopped by the admin" ? ` <span class="neg">(${esc(r.message)})</span>` : ""} — ${nf(done)} of ${nf(r.total)} files checked, ${nf(r.processed)} read · ${when(r.finished_at)}${why}. The next sync carries on from here.</div></div>`;
+    if (r.status === "failed") return `<div class="src-progress failed"><div class="progress"><i style="width:${p}%"></i></div><div class="small"><b class="neg">Failed at ${p}%</b> — ${esc(r.message || "")} · ${when(r.finished_at)}${why}</div></div>`;
+    return "";
+  }
+  /** Every 2 s while a sync runs: refresh only the progress blocks (the cards themselves stay greyed out, nothing re-binds). */
+  function updateSourceProgress(st) {
+    (state.overview.sources || []).forEach((src) => { const el = document.querySelector(`#sourceList .source[data-id="${src.id}"] .src-slot`); if (el) el.innerHTML = sourceProgress(src, st); });
+  }
+
   function renderSources(list, s, running = false) {
     // While a sync runs every card control is greyed out: a second Sync would only queue behind it, and Edit / Remove /
     // Disconnect would pull the folder from under the run. Everything comes back when the run finishes (poll → load()).
@@ -150,6 +186,7 @@
           </div>
           <label class="switch" title="${running ? "Wait for the running sync to finish" : "Include in syncs"}"><input type="checkbox" data-act="toggle" ${src.enabled ? "checked" : ""} ${busy}><span></span></label>
         </div>
+        <div class="src-slot">${sourceProgress(src, state.overview && state.overview.sync)}</div>
         <div class="actions"${running ? ' aria-busy="true"' : ""}>
           ${isCloud(src) ? `<a class="btn ${src.connected ? "" : "primary"} sm ${running ? "is-disabled" : ""}" href="/admin/sources/${src.id}/connect"${running ? ' aria-disabled="true" tabindex="-1"' : ""}${busyTitle}>${src.connected ? "Reconnect / change account" : src.kind === "m365" ? "Connect with Microsoft" : "Connect with Google"}</a>` : ""}
           <button class="btn sm ${isCloud(src) && src.connected ? "primary" : ""}" data-act="sync" ${!s.llm_ready || !src.connected ? "disabled" : busy}${busyTitle}>Sync now</button>
@@ -536,6 +573,7 @@
         const wasRunning = !!(state.overview.sync && state.overview.sync.running);
         state.overview.sync = st; renderStatus(st, state.overview.settings); renderLog(st);
         if (!!st.running !== wasRunning) renderSources(state.overview.sources, state.overview.settings, !!st.running);  // grey the cards out / back
+        else if (st.running) updateSourceProgress(st);
       }
       if (st.running) { state.wasSyncing = true; state.timer = setTimeout(poll, 2000); }
       else if (state.wasSyncing) { state.wasSyncing = false; await load(); }

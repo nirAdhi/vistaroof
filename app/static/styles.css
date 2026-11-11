@@ -342,6 +342,14 @@ body.signed-out #aiBadge, body.signed-out .drawer, body.signed-out .modal, body.
 .source-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 .source-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; margin-bottom: 4px; }
 .source .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.src-progress { margin-top: 8px; }
+.src-progress .progress { margin: 0 0 6px; }
+.src-progress.complete .progress > i { background: var(--good); }
+.src-progress.stopped .progress > i { background: var(--warning); }
+.src-progress.failed .progress > i { background: var(--critical); }
+.src-progress.live .progress > i { background-image: linear-gradient(90deg, transparent 0 60%, rgba(255,255,255,.35) 60% 100%); background-size: 24px 100%; animation: src-stripes 1s linear infinite; }
+@keyframes src-stripes { from { background-position: 0 0; } to { background-position: 24px 0; } }
+.sources-mini .row .src-line { flex-basis: 100%; }
 .source.disabled { opacity: .6; }
 .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; color: #fff; background: var(--muted); }
 .badge.good { background: var(--good); } .badge.warning { background: var(--warning); color: #0b0b0b; } .badge.serious { background: var(--serious); }

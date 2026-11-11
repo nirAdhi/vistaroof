@@ -58,6 +58,15 @@ timer, or a fresh sign-in. A watch-triggered run re-lists the whole folder (a fe
 thousands of files) but only downloads and reads what changed, plus error rows that have not yet
 used their three attempts.
 
+Each source card in Admin has its own progress line. While its part of a run goes: a bar of files
+checked out of the total, how many turned out new or changed (and how many of those are read so
+far), the files being read right now and the last few read — so when the watcher picks up two new
+uploads in a folder of thousands, the card says "2 new or changed" and names them, and it is plain
+that the rest is only being checked, not re-read. When idle: **✓ 100% complete — all N files
+checked · X new or changed read · Y unchanged or skipped · finished at …**, or "Stopped at 40%"
+(the next sync carries on from there) or "Failed" with the reason. The Sync & setup tab on the
+dashboard shows the same line per source.
+
 Each source card in Admin shows how many of its files were read, skipped and failed; the numbers and
 "View documents" open the dashboard's Documents tab filtered to that source (and status) — the tab
 has an "All sources" selector for the same purpose. While a sync runs, every control on the source

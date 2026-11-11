@@ -970,6 +970,24 @@
     $("#syncBtn").textContent = st.running ? `Syncing ${pct}%` : "Sync now";
   }
 
+  /** One line under a source on the Sync & setup tab: live progress of its part of a running sync, else "100% complete" with the last run's figures. */
+  function sourceLine(s, st) {
+    const nf = (n) => (n || 0).toLocaleString("en-IE");
+    const live = st && st.running && st.sources && st.sources[s.id];
+    if (live && live.phase === "listing") return `<div class="src-line small"><span class="live-dot"></span>Listing the files in this folder…</div>`;
+    if (live && live.phase === "processing") {
+      const p = live.total ? Math.min(100, Math.round(live.checked / live.total * 100)) : 0;
+      return `<div class="src-line small"><div class="progress"><i style="width:${p}%"></i></div><span class="live-dot"></span><b>Syncing ${p}%</b> — ${nf(live.checked)} of ${nf(live.total)} files checked · ${live.to_read ? `${nf(live.to_read)} new or changed (${nf(live.read)} read)` : "no new or changed files so far"}${live.reading.length ? ` · reading now: ${live.reading.map(esc).join(", ")}` : ""}</div>`;
+    }
+    const r = s.last_run;
+    if (!r) return "";
+    if (r.status === "done") return `<div class="src-line small"><span class="pos"><b>✓ 100% complete</b></span> — all ${nf(r.total)} files checked · ${nf(r.processed)} new or changed read · ${nf(r.skipped)} unchanged or skipped${r.errors ? ` · <span class="neg">${nf(r.errors)} failed</span>` : ""} · finished ${new Date(r.finished_at).toLocaleString("en-IE", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}${TRIGGER[r.trigger] ? ` · started by: ${TRIGGER[r.trigger].toLowerCase()}` : ""}${r.files && r.files.length && r.processed ? `<br><span class="muted">Last files read: ${r.files.slice().reverse().map(esc).join(", ")}</span>` : ""}</div>`;
+    const done = (r.processed || 0) + (r.skipped || 0) + (r.errors || 0), p = r.total ? Math.round(done / r.total * 100) : 0;
+    if (r.status === "stopped") return `<div class="src-line small"><b>Stopped at ${p}%</b>${r.message && r.message !== "stopped by the admin" ? ` <span class="neg">(${esc(r.message)})</span>` : ""} — ${nf(done)} of ${nf(r.total)} files checked. The next sync carries on from here.</div>`;
+    if (r.status === "failed") return `<div class="src-line small neg"><b>Failed at ${p}%</b> — ${esc(r.message || "")}</div>`;
+    return "";
+  }
+
   function renderSetup() {
     const c = state.config;
     const srcs = c.sources || [];
@@ -980,6 +998,7 @@
         <span class="spacer"></span>
         <span class="muted small"><a href="#" data-src-docs="${s.id}" data-status="done">${s.done_count} read</a>${s.skipped_count ? ` · <a href="#" data-src-docs="${s.id}" data-status="skipped">${s.skipped_count} skipped</a>` : ""}${s.error_count ? ` · <a href="#" class="neg" data-src-docs="${s.id}" data-status="error">${s.error_count} errors</a>` : ""} · last sync ${when(s.last_sync_at)}</span>
         <span class="status ${s.last_status === "ok" || s.last_status === "connected" || s.last_status === "ready" ? "paid" : s.last_status === "failed" ? "overdue" : "unknown"}">${label(s.enabled ? s.last_status : "disabled")}</span>
+        ${sourceLine(s, state.lastSync)}
       </div>`).join("")}</div>` : `<div class="empty">No sources connected yet</div>`) +
       `<p class="muted small" style="margin:12px 0 0">Reader: <b>${esc({ ollama: "Ollama", claude: "Claude", gemini: "Gemini" }[c.llm_provider] || c.llm_provider)}</b> · model <b>${esc(c.llm_model)}</b>${c.llm_fallback ? ` · fallback ${esc({ ollama: "Ollama", claude: "Claude", gemini: "Gemini" }[c.llm_fallback] || c.llm_fallback)}` : ""} · <span class="${c.llm_ready ? "pos" : "neg"}">${c.llm_ready ? "ready" : "key missing"}</span> · currency <b>${esc(c.currency)}</b>${c.auto_sync_minutes ? ` · auto-sync every ${c.auto_sync_minutes} min` : ""}</p>`;
     $$("#setupPanel [data-src-docs]").forEach((a) => a.addEventListener("click", (e) => {
@@ -1009,8 +1028,9 @@
   async function pollSync() {
     clearTimeout(state.syncTimer);
     const st = await api("/api/sync/status");
+    state.lastSync = st;
     renderSync(st);
-    if (st.running) { state.wasSyncing = true; state.syncTimer = setTimeout(pollSync, 2000); }
+    if (st.running) { state.wasSyncing = true; renderSetup(); state.syncTimer = setTimeout(pollSync, 2000); }
     else if (state.wasSyncing) { state.wasSyncing = false; await refresh(); renderSync(await api("/api/sync/status")); }
   }
   $("#syncBtn").addEventListener("click", () => startSync(false));

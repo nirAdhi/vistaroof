@@ -146,6 +146,12 @@ def test_local_source_sync_pipeline(admin, fresh_db, fake_claude, tmp_path):
     card = admin.get("/api/admin/sources").json()[0]
     assert (card["done_count"], card["skipped_count"], card["error_count"], card["waiting_count"]) == (5, 1, 0, 0)
     assert admin.get("/api/admin/runs").json()[0]["trigger"] == "manual"
+    # the card's own "100% complete" line comes from its last run; the live per-source progress ends at phase done
+    last = card["last_run"]
+    assert last["status"] == "done" and (last["total"], last["processed"], last["skipped"], last["errors"]) == (6, 5, 1, 0) and last["trigger"] == "manual"
+    assert set(last["files"]) == {"INV-9 Murphy.pdf", "Chadwicks bill.txt", "AIB statement March.jpg", "bill.docx", "sheet.xlsx", "notes.zip"}
+    prog = st["sources"][src["id"]]
+    assert prog["phase"] == "done" and prog["total"] == 6 and prog["checked"] == 6 and prog["to_read"] == 6 and prog["read"] == 5 and prog["skipped"] == 1 and prog["reading"] == []
     assert [d["name"] for d in admin.get(f"/api/documents?source_ref={src['id']}&status=skipped").json()] == ["notes.zip"]
 
     # a corrupt photo is skipped with a reason rather than sent to the model or treated as a failure
