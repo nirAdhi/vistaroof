@@ -11,6 +11,8 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const label = (s) => s ? String(s).replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()) : "—";
   const when = (iso) => iso ? new Date(iso).toLocaleString("en-IE", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "never";
+  /** Why a sync run started (sync_runs.trigger). A run nobody pressed a button for is the watcher reacting to a change. */
+  const TRIGGER = { manual: "Sync button", watch: "Change in SharePoint / Drive", queued: "Queued behind the previous run", schedule: "Auto-sync timer", oauth: "After sign-in", upload: "Upload" };
 
   const state = { overview: null, timer: null, wasSyncing: false, emailRequired: false };
 
@@ -139,7 +141,7 @@
           <div>
             <div class="source-title"><span class="chip ${(KIND[src.kind] || ["", "pipe"])[1]}">${kindLabel(src.kind)}</span> <b>${esc(src.name)}</b> ${statusBadge(src)} ${src.enabled ? "" : `<span class="badge muted">Disabled</span>`}</div>
             <div class="muted small">${sourceWhere(src)}</div>
-            <div class="muted small">${src.doc_count} files known · ${src.done_count} read${src.error_count ? ` · <span class="neg">${src.error_count} errors</span>` : ""} · last sync ${when(src.last_sync_at)}${isCloud(src) && src.connected ? ` · watch ${when(src.last_change_check)}` : ""}${src.last_error ? ` · <span class="neg">${esc(src.last_error)}</span>` : ""}</div>
+            <div class="muted small">${src.doc_count} files known · <a href="/?source=${src.id}&status=done#documents">${src.done_count} read</a>${src.skipped_count ? ` · <a href="/?source=${src.id}&status=skipped#documents">${src.skipped_count} skipped</a>` : ""}${src.error_count ? ` · <a class="neg" href="/?source=${src.id}&status=error#documents">${src.error_count} errors</a>` : ""}${src.waiting_count ? ` · ${src.waiting_count} waiting` : ""} · last sync ${when(src.last_sync_at)}${isCloud(src) && src.connected ? ` · watch ${when(src.last_change_check)}` : ""}${src.last_error ? ` · <span class="neg">${esc(src.last_error)}</span>` : ""}</div>
             ${src.connected ? `<div class="small">${src.can_upload ? `<span class="ok">Uploads from the dashboard enabled</span>` : `<span class="missing">Uploads disabled — ${src.kind === "m365" && src.ms_link === "shared" ? "add a source for a specific folder to upload into it" : src.kind === "m365" && !src.ms_upload ? "turn on uploads (Edit) and reconnect" : "reconnect to grant the “create files” permission"}</span>`}</div>` : ""}
           </div>
           <label class="switch" title="Include in syncs"><input type="checkbox" data-act="toggle" ${src.enabled ? "checked" : ""}><span></span></label>
@@ -151,7 +153,7 @@
           <button class="btn sm" data-act="edit">Edit</button>
           ${isCloud(src) && src.connected ? `<button class="btn sm" data-act="disconnect">Disconnect</button>` : ""}
           <button class="btn sm danger-btn" data-act="remove">Remove</button>
-          <a class="btn sm" href="/#documents" title="Open the owner dashboard filtered to this source">View documents</a>
+          <a class="btn sm" href="/?source=${src.id}#documents" title="Open the owner dashboard's Documents tab showing only this source's files">View documents</a>
         </div>
       </div>`).join("");
     $$("#sourceList .source").forEach((card) => {
@@ -372,7 +374,7 @@
   // ------------------------------------------------------------ log / data / security
   function renderLog(st) {
     const runs = st.runs || [];
-    $("#runsTable").innerHTML = runs.length ? `<table><thead><tr><th>Started</th><th>Source</th><th class="num">Files</th><th class="num">Read</th><th class="num">Skipped</th><th class="num">Errors</th><th>Result</th></tr></thead><tbody>${runs.map((r) => `<tr><td>${when(r.started_at)}</td><td>${esc(r.source_name || r.source)}${r.force ? ' <span class="chip">full</span>' : ""}</td><td class="num">${r.total}</td><td class="num">${r.processed}</td><td class="num">${r.skipped}</td><td class="num">${r.errors}</td><td>${esc(label(r.status))}${r.message ? ` <span class="neg small">${esc(r.message)}</span>` : ""}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">No syncs yet</div>`;
+    $("#runsTable").innerHTML = runs.length ? `<table><thead><tr><th>Started</th><th>Source</th><th>Started by</th><th class="num">Files</th><th class="num">Read</th><th class="num">Skipped</th><th class="num">Errors</th><th>Result</th></tr></thead><tbody>${runs.map((r) => `<tr><td>${when(r.started_at)}</td><td>${esc(r.source_name || r.source)}${r.force ? ' <span class="chip">full</span>' : ""}</td><td class="muted small">${esc(TRIGGER[r.trigger] || label(r.trigger))}</td><td class="num">${r.total}</td><td class="num">${r.processed}</td><td class="num">${r.skipped}</td><td class="num">${r.errors}</td><td>${esc(label(r.status))}${r.message ? ` <span class="neg small">${esc(r.message)}</span>` : ""}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">No syncs yet</div>`;
     const errs = st.recent_errors || [];
     $("#errorsTable").innerHTML = `<h3>Recent file errors</h3>` + (errs.length ? `<ul class="small">${errs.map((e) => `<li><b>${esc(e.file)}</b>: ${esc(e.error)}</li>`).join("")}</ul>` : `<div class="muted small">None in the current / last run. Files with a stored error are listed on the owner dashboard under Documents → Error.</div>`);
   }

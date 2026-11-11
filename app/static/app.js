@@ -43,6 +43,8 @@
   const label = (s) => s ? String(s).replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()) : "—";
   /** Source kinds: Google Drive, Microsoft 365 (SharePoint/OneDrive) or a local folder. */
   const kindLabel = (k) => ({ drive: "Google Drive", m365: "SharePoint / OneDrive", local: "folder", demo: "demo" })[k] || k;
+  /** Why a sync run started. A run nobody pressed a button for is the watcher reacting to a change in SharePoint / Drive. */
+  const TRIGGER = { manual: "Sync button", watch: "Change in SharePoint / Drive", queued: "Queued behind the previous run", schedule: "Auto-sync timer", oauth: "After sign-in", upload: "Upload" };
   /** Text for the link that opens the original file where it lives. */
   const openWhere = (d) => d.source === "m365" ? "Open in SharePoint" : d.source === "drive" ? "Open in Drive" : "Open original";
   const monthLabel = (m) => { const [y, mo] = m.split("-"); return new Date(+y, +mo - 1, 1).toLocaleString("en-IE", { month: "short", year: "2-digit" }); };
@@ -764,11 +766,12 @@
     if (state.range.from) p.set("from", state.range.from);
     if (state.range.to) p.set("to", state.range.to);
     const q = $("#docSearch").value.trim(); if (q) p.set("q", q);
-    for (const [id, key] of [["docType", "doc_type"], ["docTreatment", "treatment"], ["docPay", "payment_status"], ["docStatus", "status"]]) {
+    for (const [id, key] of [["docType", "doc_type"], ["docTreatment", "treatment"], ["docPay", "payment_status"], ["docStatus", "status"], ["docSource", "source_ref"]]) {
       const v = $("#" + id).value; if (v) p.set(key, v);
     }
     state.docs = await api(`/api/documents?${p}`);
-    $("#docCount").textContent = `${state.docs.length} documents`;
+    const srcSel = $("#docSource");
+    $("#docCount").textContent = `${state.docs.length} documents` + (srcSel.value ? ` in ${srcSel.options[srcSel.selectedIndex].textContent}` : "");
     $("#docTable").innerHTML = tableHtml([
       { key: "issue_date", label: "Date", render: (r) => r.issue_date ? fmtDate(r.issue_date) : r.modified_at ? `<span class="muted" title="No date was read from the document; placed by the file's date">~${fmtDate(r.modified_at.slice(0, 10))}</span>` : "—" },
       { key: "name", label: "File", render: (r) => `<div>${esc(r.name)}</div><div class="muted small">${esc(r.folder || r.source_name || "")}</div>` },
@@ -788,7 +791,23 @@
   }
   let searchTimer;
   $("#docSearch").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadDocs, 250); });
-  ["docType", "docTreatment", "docPay", "docStatus"].forEach((id) => $("#" + id).addEventListener("change", loadDocs));
+  ["docType", "docTreatment", "docPay", "docStatus", "docSource"].forEach((id) => $("#" + id).addEventListener("change", loadDocs));
+  /** The Documents toolbar's source list (Admin's "View documents" / "N skipped" links arrive as /?source=ID&status=skipped#documents). */
+  function fillSources() {
+    const sel = $("#docSource"), keep = sel.value;
+    sel.innerHTML = `<option value="">All sources</option>` + (state.config.sources || []).map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("");
+    sel.value = keep;
+    if (sel.value !== keep) sel.value = "";
+  }
+  function applyDocLink() {
+    const q = new URLSearchParams(location.search);
+    if (!q.has("source") && !q.has("status")) return false;
+    fillSources();
+    $("#docSource").value = q.get("source") || "";
+    $("#docStatus").value = q.get("status") || "";
+    history.replaceState(null, "", location.pathname + "#documents");  // the filters now live in the toolbar
+    return true;
+  }
   $("#exportCsv").addEventListener("click", () => {
     const cols = ["id", "issue_date", "due_date", "doc_type", "treatment", "direction", "counterparty", "document_number", "project", "category", "currency", "subtotal", "vat_amount", "total", "amount_paid", "payment_status", "name", "folder", "web_link", "summary"];
     const csv = [cols.join(",")].concat(state.docs.map((d) => cols.map((c) => { const v = d[c]; const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }).join(","))).join("\n");
@@ -912,7 +931,7 @@
   function renderSync(st) {
     const pct = st.total ? Math.round((st.processed + st.skipped + st.errors) / st.total * 100) : 0;
     const c = st.counts || {};
-    const runs = (st.runs || []).map((r) => `<tr><td>${esc((r.started_at || "").replace("T", " ").slice(0, 16))}</td><td>${esc(r.source_name || r.source)}</td><td class="num">${r.total}</td><td class="num">${r.processed}</td><td class="num">${r.skipped}</td><td class="num">${r.errors}</td><td>${esc(label(r.status))}</td></tr>`).join("");
+    const runs = (st.runs || []).map((r) => `<tr><td>${esc((r.started_at || "").replace("T", " ").slice(0, 16))}</td><td>${esc(r.source_name || r.source)}</td><td class="muted small">${esc(TRIGGER[r.trigger] || label(r.trigger))}</td><td class="num">${r.total}</td><td class="num">${r.processed}</td><td class="num">${r.skipped}</td><td class="num">${r.errors}</td><td>${esc(label(r.status))}</td></tr>`).join("");
     const enabled = (state.config.sources || []).filter((s) => s.enabled && s.connected).length;
     const watch = state.config.watch_interval_seconds;
     renderAi(st.llm);
@@ -939,7 +958,7 @@
       ${!state.config.llm_ready ? `<p class="muted small">No document reader yet — add a Claude API key in <a href="/admin#claude">Admin → Claude API</a>, or set LLM_PROVIDER=ollama in .env.</p>` : ""}
       ${!enabled ? `<p class="muted small">No connected sources yet — add a SharePoint / OneDrive folder, Google Drive or local folder in <a href="/admin#sources">Admin → Sources</a>.</p>` : ""}
       ${st.recent_errors && st.recent_errors.length ? `<h3 style="font-size:13px;margin:14px 0 6px">Recent errors</h3><ul class="small" style="padding-left:18px">${st.recent_errors.map((e) => `<li><b>${esc(e.file)}</b>: ${esc(e.error)}</li>`).join("")}</ul>` : ""}
-      ${runs ? `<h3 style="font-size:13px;margin:14px 0 6px">Previous runs</h3><table><thead><tr><th>Started</th><th>Source</th><th class="num">Files</th><th class="num">Read</th><th class="num">Skipped</th><th class="num">Errors</th><th>Status</th></tr></thead><tbody>${runs}</tbody></table>` : ""}`;
+      ${runs ? `<h3 style="font-size:13px;margin:14px 0 6px">Previous runs</h3><table><thead><tr><th>Started</th><th>Source</th><th>Started by</th><th class="num">Files</th><th class="num">Read</th><th class="num">Skipped</th><th class="num">Errors</th><th>Status</th></tr></thead><tbody>${runs}</tbody></table>` : ""}`;
     $("#syncNow").addEventListener("click", () => startSync(false));
     $("#syncForce").addEventListener("click", () => { if (confirm(state.config.llm_provider === "ollama" ? "Re-read every file with the local model? This takes a while." : "Re-read every file with Claude? This costs API usage for every document.")) startSync(true); });
     $("#syncBtn").disabled = !!st.running || !state.config.llm_ready;
@@ -955,10 +974,15 @@
         <span class="chip ${s.kind === "local" ? "pipe" : "in"}">${kindLabel(s.kind)}</span><b>${esc(s.name)}</b>
         <span class="muted small">${s.kind === "local" ? esc(s.local_folder) : esc(s.account_email || "not signed in")}</span>
         <span class="spacer"></span>
-        <span class="muted small">${s.done_count} read${s.error_count ? ` · <span class="neg">${s.error_count} errors</span>` : ""} · last sync ${when(s.last_sync_at)}</span>
+        <span class="muted small"><a href="#" data-src-docs="${s.id}" data-status="done">${s.done_count} read</a>${s.skipped_count ? ` · <a href="#" data-src-docs="${s.id}" data-status="skipped">${s.skipped_count} skipped</a>` : ""}${s.error_count ? ` · <a href="#" class="neg" data-src-docs="${s.id}" data-status="error">${s.error_count} errors</a>` : ""} · last sync ${when(s.last_sync_at)}</span>
         <span class="status ${s.last_status === "ok" || s.last_status === "connected" || s.last_status === "ready" ? "paid" : s.last_status === "failed" ? "overdue" : "unknown"}">${label(s.enabled ? s.last_status : "disabled")}</span>
       </div>`).join("")}</div>` : `<div class="empty">No sources connected yet</div>`) +
       `<p class="muted small" style="margin:12px 0 0">Reader: <b>${esc({ ollama: "Ollama", claude: "Claude", gemini: "Gemini" }[c.llm_provider] || c.llm_provider)}</b> · model <b>${esc(c.llm_model)}</b>${c.llm_fallback ? ` · fallback ${esc({ ollama: "Ollama", claude: "Claude", gemini: "Gemini" }[c.llm_fallback] || c.llm_fallback)}` : ""} · <span class="${c.llm_ready ? "pos" : "neg"}">${c.llm_ready ? "ready" : "key missing"}</span> · currency <b>${esc(c.currency)}</b>${c.auto_sync_minutes ? ` · auto-sync every ${c.auto_sync_minutes} min` : ""}</p>`;
+    $$("#setupPanel [data-src-docs]").forEach((a) => a.addEventListener("click", (e) => {
+      e.preventDefault();
+      fillSources(); $("#docSource").value = a.dataset.srcDocs; $("#docStatus").value = a.dataset.status || "";
+      showView("documents");
+    }));
     const tr = state.meta.treatments;
     $("#rulesPanel").innerHTML = `<table><thead><tr><th>Counted as</th><th>Meaning</th><th>Which documents</th></tr></thead><tbody>
       <tr><td>${treatmentChip("revenue")}</td><td>${esc(tr.revenue)}</td><td>Sales invoices the company issued (credit notes issued are subtracted)</td></tr>
@@ -1093,11 +1117,13 @@
       : (state.config.demo_loaded ? "Demo data" : "No sources connected");
     const fill = (id, list, allowBlank = true) => { const sel = $("#" + id); const first = sel.options[0].outerHTML; sel.innerHTML = first + list.map((v) => `<option value="${esc(v)}">${esc(label(v))}</option>`).join(""); };
     fill("docType", state.meta.doc_types); fill("docTreatment", Object.keys(state.meta.treatments)); fill("docPay", state.meta.payment_statuses);
+    fillSources();
     if (!state.range.from && !state.range.to && state.range.preset) applyPreset(state.range.preset);
+    const linked = applyDocLink();
     await refresh();
     renderSetup();
     const total = Object.values(state.config.counts || {}).reduce((a, b) => a + b, 0);
-    const wanted = location.hash.slice(1);
+    const wanted = linked ? "documents" : location.hash.slice(1);
     if (wanted && VIEWS.includes(wanted)) showView(wanted);
     else if (!total) showView("sync");
     pollSync();

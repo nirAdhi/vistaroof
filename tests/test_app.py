@@ -142,6 +142,11 @@ def test_local_source_sync_pipeline(admin, fresh_db, fake_claude, tmp_path):
     assert by_name["Chadwicks bill.txt"]["treatment"] == "expense" and by_name["Chadwicks bill.txt"]["project"] == "Oak Drive"
     assert by_name["AIB statement March.jpg"]["treatment"] == "none"
     assert by_name["notes.zip"]["status"] == "skipped" and "unsupported" in by_name["notes.zip"]["error"]
+    # the source card counts what the per-source document views show, and the log says who started the run
+    card = admin.get("/api/admin/sources").json()[0]
+    assert (card["done_count"], card["skipped_count"], card["error_count"], card["waiting_count"]) == (5, 1, 0, 0)
+    assert admin.get("/api/admin/runs").json()[0]["trigger"] == "manual"
+    assert [d["name"] for d in admin.get(f"/api/documents?source_ref={src['id']}&status=skipped").json()] == ["notes.zip"]
 
     # a corrupt photo is skipped with a reason rather than sent to the model or treated as a failure
     (folder / "broken.jpg").write_bytes(b"\xff\xd8\xff not really a jpeg")

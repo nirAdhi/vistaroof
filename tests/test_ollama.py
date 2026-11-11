@@ -97,6 +97,41 @@ def test_pdf_excel_and_word_are_turned_into_text_before_the_model(monkeypatch, f
     assert "Receipt from Screwfix" in fake.requests[-1]["messages"][1]["content"] and fields["doc_type"] == "receipt"
 
 
+def test_spreadsheet_rows_are_trimmed_and_a_whole_workbook_is_not_one_document(monkeypatch, fresh_db):
+    """A job-costing workbook: every row padded with dozens of empty cells (the sheet's used range runs far
+    to the right), one sheet per job. The padding must not count towards the size limit, and a workbook
+    that is still too long is skipped with a reason that says what to do, not "text file too large"."""
+    import openpyxl
+
+    from app import textract
+
+    fake = FakeOllama()
+    install_fake_ollama(monkeypatch, fake)
+    xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "101"
+    ws.append(["JOB SUMMARY"] + [None] * 60); ws.append(["BALANCE DUE", 70000] + [None] * 59); ws.append([None] * 61)
+    wb.create_sheet("empty")  # adds nothing
+    buf = io.BytesIO(); wb.save(buf)
+    text = textract.office_to_text(FileContent(mime=xlsx_mime, data=buf.getvalue()))
+    assert text == "## Sheet: 101\nJOB SUMMARY\nBALANCE DUE | 70000"
+    extract.extract(_meta("Job Summary.xlsx", xlsx_mime), FileContent(mime=xlsx_mime, data=buf.getvalue()))
+    assert "BALANCE DUE | 70000\n" in fake.requests[-1]["messages"][1]["content"] + "\n"
+
+    # 40 jobs × 400 rows of real text: far past the limit even trimmed → skipped with a clear, actionable reason
+    wb = openpyxl.Workbook(); wb.remove(wb.active)
+    for job in range(40):
+        ws = wb.create_sheet(str(100 + job))
+        for i in range(400):
+            ws.append([f"VALUATION {i}", "Bakers Yard roof works stage payment", 1234.5 + i, None, None, None])
+    buf = io.BytesIO(); wb.save(buf)
+    n = len(fake.requests)
+    with pytest.raises(ValueError) as exc:
+        extract.extract(_meta("Vista Job Summary.xlsx", xlsx_mime), FileContent(mime=xlsx_mime, data=buf.getvalue()))
+    msg = str(exc.value)
+    assert msg.startswith("too long to read as one document: a workbook of 40 sheets") and "by hand" in msg
+    assert len(fake.requests) == n  # nothing was sent to the model
+
+
 def test_photos_and_scanned_pdfs_are_skipped_without_fallback(monkeypatch, fresh_db):
     fake = FakeOllama()
     install_fake_ollama(monkeypatch, fake)

@@ -51,6 +51,20 @@ folder and costs no GPU or API usage; only a new or modified file is downloaded 
 dashboard notices new figures within 20 s and refreshes itself. "Full re-read" re-reads everything
 and is only for when the reader or its prompt changed.
 
+A sync that starts by itself is one of these, and the Sync log (Admin → Sync log, and the Sync tab
+on the dashboard) says which in its "Started by" column: a change reported by SharePoint / Drive, a
+request queued behind the previous run (a Sync button pressed while one was running), the auto-sync
+timer, or a fresh sign-in. A watch-triggered run re-lists the whole folder (a few minutes for
+thousands of files) but only downloads and reads what changed, plus error rows that have not yet
+used their three attempts.
+
+Each source card in Admin shows how many of its files were read, skipped and failed; the numbers and
+"View documents" open the dashboard's Documents tab filtered to that source (and status) — the tab
+has an "All sources" selector for the same purpose. A spreadsheet or text export too long to be one
+document (over 300,000 characters after empty cells are trimmed, e.g. a job-costing workbook with a
+sheet per job) is skipped with that reason: enter the figures you need by hand, or save the relevant
+sheet as its own file.
+
 ## When the reader is off (and email alerts)
 
 Every figure lives in the app's own database, so the dashboard, documents, companies, previews and

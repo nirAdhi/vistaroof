@@ -52,9 +52,9 @@ def odf_to_text(data: bytes, spreadsheet: bool) -> str:
         for table in root.iter(f"{_ODF_TABLE}table"):
             parts.append(f"## Sheet: {table.get(f'{_ODF_TABLE}name', '')}")
             for row in table.iter(f"{_ODF_TABLE}table-row"):
-                cells = ["".join(c.itertext()).strip() for c in row if c.tag == f"{_ODF_TABLE}table-cell"]
-                if any(cells):
-                    parts.append(" | ".join(cells))
+                line = _cells(tuple("".join(c.itertext()) for c in row if c.tag == f"{_ODF_TABLE}table-cell"))
+                if line:
+                    parts.append(line)
     else:
         for el in root.iter():
             if el.tag in (f"{_ODF_TEXT}p", f"{_ODF_TEXT}h"):
@@ -87,12 +87,39 @@ def office_to_text(content: FileContent) -> str | None:
         wb = openpyxl.load_workbook(io.BytesIO(content.data), read_only=True, data_only=True)
         parts = []
         for ws in wb.worksheets:
-            parts.append(f"## Sheet: {ws.title}")
-            for row in ws.iter_rows(values_only=True):
-                if any(v is not None for v in row):
-                    parts.append(" | ".join("" if v is None else str(v) for v in row))
+            rows = [_cells(row) for row in ws.iter_rows(values_only=True)]
+            rows = [r for r in rows if r]
+            if rows:  # an empty sheet adds nothing
+                parts.append(f"## Sheet: {ws.title}")
+                parts.extend(rows)
         return "\n".join(parts)
     return None
+
+
+def _cells(row: tuple) -> str:
+    """One sheet row as text. A workbook's used range often runs far to the right of the last value
+    (formatting, stray cells), so every row would end in dozens of empty " | " columns and a modest
+    job-costing workbook would run past the size limit: trailing empties are dropped."""
+    vals = ["" if v is None else str(v).strip() for v in row]
+    while vals and not vals[-1]:
+        vals.pop()
+    return " | ".join(vals) if any(vals) else ""
+
+
+MAX_TEXT_CHARS = 300_000  # ~75k tokens: beyond this a file is not one document but a ledger of its own
+
+
+def check_length(text: str) -> None:
+    """ValueError (→ skipped with the reason) for text too long to read as a single document."""
+    if len(text) <= MAX_TEXT_CHARS:
+        return
+    sheets = text.count("\n## Sheet: ") + (1 if text.startswith("## Sheet: ") else 0)
+    what = f"a workbook of {sheets} sheets" if sheets > 1 else "the file"
+    raise ValueError(
+        f"too long to read as one document: {what} holds {len(text):,} characters of text (limit {MAX_TEXT_CHARS:,}). "
+        "A workbook or export with many records is a ledger of its own, not an invoice — enter the figures you need by hand, "
+        "or save the relevant sheet or page as its own file."
+    )
 
 
 def pdf_to_text(data: bytes) -> str:

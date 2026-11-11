@@ -49,6 +49,12 @@ _state: dict[str, Any] = {
 }
 ADMIN_STOP = "stopped by the admin"
 _rerun: dict[int | None, bool] = {}  # source id -> force; None = all enabled sources
+# Why a run started, for the status line: a sync that starts "by itself" is the watcher reacting to a change
+# in SharePoint / Drive, a request queued behind the previous run, the auto-sync timer, or a fresh sign-in.
+TRIGGER_WHY = {
+    "watch": "SharePoint / Drive reported a change", "queued": "requested while the previous sync was running",
+    "schedule": "automatic sync timer", "oauth": "just connected",
+}
 
 
 def status() -> dict[str, Any]:
@@ -179,7 +185,8 @@ def _drain_rerun() -> None:
 def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
     """Full listing + processing of one source, recorded as one sync_runs row."""
     run_id = db.start_run(src["kind"], src["id"], src["name"], force, trigger)
-    _set(phase="listing", current_source=src["name"], message=f"Listing files in {src['name']}…")
+    why = TRIGGER_WHY.get(trigger)
+    _set(phase="listing", current_source=src["name"], message=f"Listing files in {src['name']}…" + (f" ({why})" if why else ""))
     db.update_source(src["id"], last_status="syncing", last_error=None)
     try:
         source = open_source(src)
@@ -190,7 +197,8 @@ def _run_source(src: dict[str, Any], force: bool, trigger: str) -> None:
         base = dict(processed=_state["processed"], skipped=_state["skipped"], errors=_state["errors"])
         # Skipped files worth another look: photos / scans once a vision reader exists, and file types the app has
         # since learnt to read (a still-unsupported type is skipped again in a millisecond, no download involved).
-        retry = ("unsupported file type",) + ((extract.NEEDS_VISION_PREFIX,) if extract.vision_available() else ())
+        retry = ("unsupported file type", "text file too large") + ((extract.NEEDS_VISION_PREFIX,) if extract.vision_available() else ())
+        # ("text file too large": the wording before spreadsheet rows were trimmed; such files may fit now)
         with ThreadPoolExecutor(max_workers=max(1, settings.get_int("concurrency", 3))) as pool:
             futures = {pool.submit(_process_one, source, meta, force, retry): meta for meta in files}
             for fut in as_completed(futures):

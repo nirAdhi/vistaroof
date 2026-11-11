@@ -275,7 +275,9 @@ def list_sources(include_secrets: bool = False) -> list[dict[str, Any]]:
             """SELECT s.*,
                       (SELECT COUNT(*) FROM documents d WHERE d.source_ref = s.id AND d.status != 'removed') AS doc_count,
                       (SELECT COUNT(*) FROM documents d WHERE d.source_ref = s.id AND d.status='done') AS done_count,
-                      (SELECT COUNT(*) FROM documents d WHERE d.source_ref = s.id AND d.status='error') AS error_count
+                      (SELECT COUNT(*) FROM documents d WHERE d.source_ref = s.id AND d.status='error') AS error_count,
+                      (SELECT COUNT(*) FROM documents d WHERE d.source_ref = s.id AND d.status='skipped') AS skipped_count,
+                      (SELECT COUNT(*) FROM documents d WHERE d.source_ref = s.id AND d.status IN ('pending', 'processing')) AS waiting_count
                FROM sources s ORDER BY s.id"""
         ).fetchall()
     out = []

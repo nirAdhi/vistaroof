@@ -216,8 +216,7 @@ def build_content_blocks(meta: FileMeta, content: FileContent) -> list[dict[str,
     mime = content.mime
     max_bytes = settings.get_float("max_file_mb", 25) * 1024 * 1024
     if content.text is not None:
-        if len(content.text) > 300_000:
-            raise ValueError("text file too large to process")
+        textract.check_length(content.text)
         blocks.append({"type": "text", "text": f"<document_text>\n{content.text}\n</document_text>"})
     elif mime == "application/pdf":
         if len(content.data or b"") > max_bytes:
@@ -235,7 +234,8 @@ def build_content_blocks(meta: FileMeta, content: FileContent) -> list[dict[str,
         text = _office_to_text(content)
         if not text or not text.strip():
             raise ValueError("no text found in office document")
-        blocks.append({"type": "text", "text": f"<document_text>\n{text[:300_000]}\n</document_text>"})
+        textract.check_length(text)
+        blocks.append({"type": "text", "text": f"<document_text>\n{text}\n</document_text>"})
     else:
         raise ValueError(f"unsupported file type {mime}")
 
@@ -675,8 +675,7 @@ def _extract_ollama(meta: FileMeta, content: FileContent) -> tuple[dict[str, Any
         if config.OLLAMA_VISION_MODEL:  # a vision model on the same Ollama server reads photos and scans locally
             return _extract_ollama_vision(meta, content)
         raise  # propagates to extract(): fallback reader, or skipped with the reason
-    if len(text) > 300_000:
-        raise ValueError("text file too large to process")
+    textract.check_length(text)
     text, truncated = textract.fit(text, small_text_budget())
     messages = [
         {"role": "system", "content": build_small_prompt()},
