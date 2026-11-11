@@ -306,13 +306,14 @@ def test_two_drives_same_file_id_do_not_collide(admin, fresh_db, fake_claude, mo
 
 
 def _job_workbook(path: Path, jobs: list[tuple[str, str, int]]) -> None:
-    """A job-costing workbook like Cormac's: one sheet per job, every sheet built from the same template."""
+    """A workbook with one sheet per record, every sheet built from the same template (a layout the app has no
+    parser for, so each sheet goes to the model; Cormac's JOB SUMMARY layout is covered in test_jobsheet.py)."""
     import openpyxl
 
     wb = openpyxl.Workbook(); wb.remove(wb.active)
     for no, site, value in jobs:
         ws = wb.create_sheet(no)
-        ws.append(["JOB SUMMARY"] + [None] * 30)
+        ws.append(["SITE COSTING"] + [None] * 30)
         ws.append(["SITE:", None, "JOB NO:"]); ws.append([site, None, no])
         ws.append(["CONTRACT VALUE/SUM", value]); ws.append(["BALANCE DUE", value - 5000])
     wb.create_sheet("Notes")  # empty: ignored
@@ -345,7 +346,7 @@ def test_a_workbook_with_a_sheet_per_job_is_read_sheet_by_sheet(admin, fresh_db,
     assert (card["done_count"], card["skipped_count"]) == (5, 0)
     # the sheet document previews as that sheet alone; the workbook row shows the whole file
     r = admin.get(f"/api/documents/{sheets[2]['id']}/preview")
-    assert r.status_code == 200 and r.text.startswith("JOB SUMMARY") and "Mill Lane" in r.text and "Bakers Yard" not in r.text
+    assert r.status_code == 200 and r.text.startswith("SITE COSTING") and "Mill Lane" in r.text and "Bakers Yard" not in r.text
     assert "## Sheet: 101" in admin.get(f"/api/documents/{book['id']}/preview").text
 
     # nothing changed → nothing re-read, the sheet documents are not "missing" from the folder listing

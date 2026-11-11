@@ -162,6 +162,7 @@ def fetch_part(source, meta: FileMeta) -> FileContent:
         return source.fetch(meta)
     from dataclasses import replace
 
+    sheet = sheet.split("#inv:", 1)[0]  # an invoice row of a job sheet ("…#sheet:101#inv:C") previews / re-reads as its sheet
     content = source.fetch(replace(meta, source_id=base))
     for name, text in workbook_sheets(content):
         if name == sheet:

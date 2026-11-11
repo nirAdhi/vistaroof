@@ -37,7 +37,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from . import db, extract, llm, notify, ollama, settings, textract
+from . import db, extract, jobsheet, llm, notify, ollama, settings, textract
 from .sources import SUPPORTED_MIMES, FileContent, FileMeta, open_source
 
 log = logging.getLogger(__name__)
@@ -383,6 +383,10 @@ def _process_workbook(source, meta: FileMeta, doc_id: int, sheets: list[tuple[st
         _set(current_file=child.name)
         db.set_status(cid, "processing")
         try:
+            if jobsheet.is_job_summary(text):  # Cormac's job sheets: figures taken straight from the cells, no model
+                present.update(_read_job_sheet(child, cid, text, force))
+                _bump("processed")
+                continue
             fields, model = extract.extract(child, FileContent(mime="text/plain", text=text))
             db.save_extraction(cid, fields, model)
             _bump("processed")
@@ -406,6 +410,23 @@ def _process_workbook(source, meta: FileMeta, doc_id: int, sheets: list[tuple[st
     return "split"
 
 
+def _read_job_sheet(child: FileMeta, cid: int, text: str, force: bool) -> set[str]:
+    """A JOB SUMMARY sheet: the sheet document becomes the job record and every invoice column its own sales
+    invoice document ("Book.xlsx › 101 › Invoice 4", source_id "<sheet>#inv:<column>"). Returns the ids present."""
+    parsed = jobsheet.parse(text) or {}
+    db.save_extraction(cid, extract.derive(jobsheet.job_fields(parsed)), jobsheet.MODEL)
+    present: set[str] = set()
+    for inv in parsed.get("invoices", []):
+        inv_meta = FileMeta(source=child.source, source_ref=child.source_ref, source_id=f"{child.source_id}{jobsheet.INV_SEP}{inv['key']}",
+                            name=f"{child.name} › {inv['label']}", mime=child.mime, folder=child.folder, web_link=child.web_link,
+                            size=None, modified_at=child.modified_at, uploaded_by=child.uploaded_by)
+        present.add(inv_meta.source_id)
+        iid = db.upsert_file_metadata(inv_meta.as_dict())
+        if db.needs_processing(iid, force=force):  # a hand-corrected invoice row stays as corrected
+            db.save_extraction(iid, extract.derive(jobsheet.invoice_fields(parsed, inv)), jobsheet.MODEL)
+    return present
+
+
 def reprocess(doc_id: int, provider: str | None = None) -> dict[str, Any]:
     """Re-run extraction for a single stored document (synchronously), discarding hand edits.
     ``provider`` forces a particular reader for this file (e.g. Gemini for a photo Ollama skipped)."""
@@ -426,6 +447,18 @@ def reprocess(doc_id: int, provider: str | None = None) -> dict[str, Any]:
     db.set_status(doc_id, "processing")
     try:
         content = textract.fetch_part(source, meta)
+        if content.text is not None and jobsheet.is_job_summary(content.text):  # a job sheet or one of its invoice rows: no model
+            parsed = jobsheet.parse(content.text) or {}
+            _, part = textract.split_ref(meta.source_id)
+            key = part.split(jobsheet.INV_SEP, 1)[1] if part and jobsheet.INV_SEP in part else None
+            if key is None:
+                db.save_extraction(doc_id, extract.derive(jobsheet.job_fields(parsed)), jobsheet.MODEL)
+            else:
+                inv = next((i for i in parsed.get("invoices", []) if i["key"] == key), None)
+                if inv is None:
+                    raise ValueError(f"invoice column {key} is no longer on the sheet")
+                db.save_extraction(doc_id, extract.derive(jobsheet.invoice_fields(parsed, inv)), jobsheet.MODEL)
+            return db.get_document(doc_id) or {}
         if textract.is_spreadsheet(content.mime):
             sheets = textract.workbook_sheets(content)
             if textract.should_split(sheets):  # Re-read on the workbook row re-reads every sheet document (hand entries on sheets stay: needs_processing)

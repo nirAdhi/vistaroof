@@ -92,7 +92,18 @@ from the same template) are read sheet by sheet: each sheet becomes its own docu
 "Book.xlsx › Sheet" with that sheet's text as its preview, and the workbook row shows as *Workbook*
 with a link to its sheet documents. The split happens when three or more sheets start with the same
 line, or when the whole workbook is longer than one document can be (300,000 characters after
-empty cells are trimmed). A sheet deleted from the workbook is removed on the next sync; a changed
+empty cells are trimmed).
+
+**Job summary sheets are read without a model.** A sheet that starts with "JOB SUMMARY" (Vista's
+job-costing layout: SITE / JOB NO, CONTRACT VALUE/SUM, VALUATION columns, INVOICED/PAYMENT with
+"INVOICE AMOUNT Excl VAT", DATE and "PAID N/Y" rows) is parsed cell by cell (`app/jobsheet.py`):
+every invoice column with an amount becomes a **sales invoice** document named
+"Book.xlsx › 101 › Invoice 4" — net amount, invoice date, paid or unpaid (a `**Y` is paid less 20%
+RCT tax, flagged), the job as its project — so the dashboard's revenue, monthly figures and the Jobs
+tab come straight from the sheet; the sheet document itself is the job record (type other, counts
+nothing) with the contract value, final agreed figure, works to date per valuation and balance due in
+its summary. Reader shown as `jobsheet`, confidence 100 %. A hand correction on an invoice row is kept
+across syncs; a column removed from the sheet is removed from the ledger. A sheet deleted from the workbook is removed on the next sync; a changed
 workbook re-reads its sheets; hand entries on a sheet document are kept. A two-sheet statement or
 an invoice with a "Rates" sheet stays one document. A job summary sheet is read as type *other*
 with the site and job number as the job, the contract value as the total and a one-line summary
