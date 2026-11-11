@@ -37,7 +37,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from . import db, extract, jobsheet, llm, notify, ollama, settings, textract
+from . import db, dedupe, extract, jobsheet, llm, notify, ollama, settings, textract
 from .sources import SUPPORTED_MIMES, FileContent, FileMeta, open_source
 
 log = logging.getLogger(__name__)
@@ -200,6 +200,7 @@ def _run_all(sources: list[dict[str, Any]], force: bool, trigger: str) -> None:
             _run_source(src, force, trigger)
         reason = _state["stop_reason"]
         message = "Sync complete" if not _state["stop_requested"] else "Sync stopped" if reason == ADMIN_STOP else f"Sync stopped: {reason}"
+        dedupe.refresh()  # job-sheet invoices that double an invoice document are counted once
         _set(phase="done", message=message, current_source=None, current_file=None)
     except Exception as exc:  # pragma: no cover - defensive
         _set(phase="failed", message=f"Sync failed: {exc}")
@@ -458,11 +459,13 @@ def reprocess(doc_id: int, provider: str | None = None) -> dict[str, Any]:
                 if inv is None:
                     raise ValueError(f"invoice column {key} is no longer on the sheet")
                 db.save_extraction(doc_id, extract.derive(jobsheet.invoice_fields(parsed, inv)), jobsheet.MODEL)
+            dedupe.refresh()
             return db.get_document(doc_id) or {}
         if textract.is_spreadsheet(content.mime):
             sheets = textract.workbook_sheets(content)
             if textract.should_split(sheets):  # Re-read on the workbook row re-reads every sheet document (hand entries on sheets stay: needs_processing)
                 _process_workbook(source, meta, doc_id, sheets, force=False)
+                dedupe.refresh()
                 return db.get_document(doc_id) or {}
         fields, model = extract.extract_with(provider, meta, content) if provider else extract.extract(meta, content)
         db.save_extraction(doc_id, fields, model)
@@ -471,6 +474,7 @@ def reprocess(doc_id: int, provider: str | None = None) -> dict[str, Any]:
     except Exception as exc:
         db.mark_error(doc_id, f"{type(exc).__name__}: {str(exc)[:400]}")
         raise
+    dedupe.refresh()
     return db.get_document(doc_id) or {}
 
 

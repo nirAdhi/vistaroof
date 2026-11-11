@@ -70,6 +70,42 @@ def test_the_sheet_text_is_parsed_exactly():
     assert jobsheet.parse("Some other sheet\n1 | 2") is None
 
 
+def test_a_sheet_invoice_that_doubles_an_invoice_document_is_counted_once(admin, fresh_db, fake_claude, tmp_path):
+    """The Oak Drive job sheet lists Invoice 1 for €5,000 on 1 Mar 2026; the invoice PDF for the same job
+    (INV-9, €5,000 net, 10 Mar 2026) is in the Invoices library too. Revenue must count €5,000 once."""
+    import os
+
+    folder = tmp_path / "Docs"; folder.mkdir()
+    (folder / "INV-9 Murphy.pdf").write_bytes(b"%PDF-1.4 fake invoice")  # fake Claude: sales invoice, net 5000, 2026-03-10, project Oak Drive
+    wb = openpyxl.Workbook(); wb.remove(wb.active)
+    _job_sheet(wb.create_sheet("102"), "Oak Drive", "102", [("Invoice 1", 5000, datetime(2026, 3, 1), "N"), ("Invoice 2", 8000, datetime(2026, 4, 9), "N")])
+    _job_sheet(wb.create_sheet("103"), "Mill Lane", "103", [("Invoice 1", 5000, datetime(2023, 1, 5), "Y")])  # same amount, years apart, other site: not a match
+    _job_sheet(wb.create_sheet("104"), "Quay St", "104", [])
+    wb.save(folder / "Vista Job Summary.xlsx")
+    src = admin.post("/api/admin/sources", json={"kind": "local", "name": "Docs", "local_folder": str(folder)}).json()
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    docs = {d["name"]: d for d in admin.get("/api/documents?limit=100&from=2000-01-01").json()}
+    pdf, inv1, inv2 = docs["INV-9 Murphy.pdf"], docs["Vista Job Summary.xlsx › 102 › Invoice 1"], docs["Vista Job Summary.xlsx › 102 › Invoice 2"]
+    assert inv1["duplicate_of"] == pdf["id"] and inv1["duplicate_name"] == "INV-9 Murphy.pdf"
+    assert inv2["duplicate_of"] is None and pdf["duplicate_of"] is None and docs["Vista Job Summary.xlsx › 103 › Invoice 1"]["duplicate_of"] is None
+    s = admin.get("/api/summary?from=2026-01-01&to=2026-12-31").json()
+    assert s["totals"]["revenue"] == 13000 and s["totals"]["duplicates_counted_once"] == 1  # 5000 (PDF) + 8000, not 18000
+    assert s["totals"]["receivables"] == 5675 + 8000  # the PDF's gross outstanding + the sheet's second invoice
+    comp = {c["name"]: c for c in admin.get("/api/companies").json()}
+    assert comp["Murphy Homes"]["revenue"] == 5000 and comp["Oak Drive"]["revenue"] == 8000 and comp["Mill Lane"]["revenue"] == 5000
+    # the PDF's amount is corrected by hand → no longer the same invoice → the sheet row counts again
+    assert admin.patch(f"/api/documents/{pdf['id']}", json={"subtotal": 4000, "total": 4540}).status_code == 200
+    assert admin.get(f"/api/documents/{inv1['id']}").json()["duplicate_of"] is None
+    assert admin.get("/api/summary?from=2026-01-01&to=2026-12-31").json()["totals"]["revenue"] == 4000 + 5000 + 8000
+    assert admin.patch(f"/api/documents/{pdf['id']}", json={"subtotal": 5000, "total": 5675}).status_code == 200
+    assert admin.get(f"/api/documents/{inv1['id']}").json()["duplicate_of"] == pdf["id"]
+    # the PDF leaves the library → the sheet row is the only record again
+    os.remove(folder / "INV-9 Murphy.pdf")
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    assert admin.get(f"/api/documents/{inv1['id']}").json()["duplicate_of"] is None
+    assert admin.get("/api/summary?from=2026-01-01&to=2026-12-31").json()["totals"]["revenue"] == 13000
+
+
 def test_job_sheets_become_sales_invoices_in_the_ledger_without_a_model(admin, fresh_db, fake_claude, tmp_path):
     folder = tmp_path / "Turnover"; folder.mkdir()
     wb = openpyxl.Workbook(); wb.remove(wb.active)

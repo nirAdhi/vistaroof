@@ -52,7 +52,7 @@ from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import analytics, ask, backup, config, db, demo, extract, gemini, llm, logsetup, microsoft, notify, ollama, previews, repair, settings, sources, sync
+from . import analytics, ask, backup, config, db, dedupe, demo, extract, gemini, llm, logsetup, microsoft, notify, ollama, previews, repair, settings, sources, sync
 from .errors import ApiUnavailable
 
 log = logging.getLogger(__name__)
@@ -473,6 +473,7 @@ def patch_document(doc_id: int, patch: DocumentPatch) -> dict[str, Any]:
             if changes.get(k) is None and derived.get(k) is not None:
                 changes[k] = derived[k]
     db.update_document(doc_id, changes, {k: derived[k] for k in ("treatment", "sign", "net_amount")})
+    dedupe.refresh()  # a corrected amount or date may make or break a match with a job-sheet invoice
     return db.get_document(doc_id) or {}
 
 

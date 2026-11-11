@@ -58,7 +58,7 @@ def companies(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     agg: dict[str, dict[str, Any]] = {}
     for d in docs:
         name = (d.get("counterparty") or "").strip()
-        if not name:
+        if not name or d.get("duplicate_of"):
             continue
         c = agg.setdefault(name, {"name": name, "roles": {}, "docs": 0, "revenue": 0.0, "expenses": 0.0, "pipeline": 0.0,
                                   "outstanding": 0.0, "first_date": None, "last_date": None, "types": {}})
@@ -96,6 +96,8 @@ def compute(docs: list[dict[str, Any]], date_from: str | None, date_to: str | No
 
     dated = []
     undated = 0
+    duplicates = sum(1 for d in docs if d.get("duplicate_of"))
+    docs = [d for d in docs if not d.get("duplicate_of")]  # a job-sheet invoice that doubles an invoice document counts once
     for d in docs:
         ed = _eff_date(d)
         if ed is None:
@@ -233,6 +235,7 @@ def compute(docs: list[dict[str, Any]], date_from: str | None, date_to: str | No
             "payments_recorded": s(pay_docs), "payments_count": len(pay_docs),
             "documents": len(dated), "revenue_docs": len(rev_docs), "expense_docs": len(exp_docs),
             "undated_docs": undated + sum(1 for d in dated if d["_undated"]),
+            "duplicates_counted_once": duplicates,
         },
         "monthly": monthly,
         "expenses_by_category": group(exp_docs, "category"),

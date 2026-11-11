@@ -785,7 +785,7 @@
       { key: "payment_status", label: "Paid?", render: (r) => r.payment_status && r.payment_status !== "not_applicable" ? statusChip(r.payment_status) : "" },
       { key: "net_amount", label: "Net", num: true, render: (r) => r.net_amount != null ? money(r.net_amount) : "" },
       { key: "total", label: "Total", num: true, render: (r) => r.total != null ? money(r.total) : "" },
-      { key: "confidence", label: "", render: (r) => (notRead(r) ? `<button class="btn sm" data-manual="${r.id}" title="${esc(r.error || "Not read")} — type the figures in yourself">Enter by hand</button> ` : "") + (r.overridden ? `<span class="chip" title="${r.model === "manual" ? "Figures entered by hand" : "Edited by hand"}">${r.model === "manual" ? "by hand" : "edited"}</span> ` : "") + (r.flags && r.flags.length ? `<span class="flag" title="${esc(r.flags.join(", "))}">⚑</span> ` : "") + previewBtn(r) },
+      { key: "confidence", label: "", render: (r) => (notRead(r) ? `<button class="btn sm" data-manual="${r.id}" title="${esc(r.error || "Not read")} — type the figures in yourself">Enter by hand</button> ` : "") + (r.overridden ? `<span class="chip" title="${r.model === "manual" ? "Figures entered by hand" : "Edited by hand"}">${r.model === "manual" ? "by hand" : "edited"}</span> ` : "") + (r.duplicate_of ? `<span class="chip" title="The same invoice is also in the ledger as ${esc(r.duplicate_name || "another document")}; the figures count once">counted once</span> ` : "") + (r.flags && r.flags.length ? `<span class="flag" title="${esc(r.flags.join(", "))}">⚑</span> ` : "") + previewBtn(r) },
     ], state.docs, { rowAttr: (r) => `class="row-link" data-id="${r.id}"`, empty: "No documents match" });
     $$("#docTable tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openDoc(+tr.dataset.id)));
     $$("#docTable [data-manual]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openDoc(+b.dataset.manual); }));
@@ -865,6 +865,7 @@
       <div class="small"><button class="link-btn" id="drawerPreview">Open large preview</button>${d.web_link ? ` · <a href="${esc(d.web_link)}" target="_blank" rel="noopener">${openWhere(d)}</a>` : ""}${d.counterparty ? ` · <button class="link-btn" data-company="${esc(d.counterparty)}">All documents from ${esc(d.counterparty)}</button>` : ""}${d.source === "demo" ? ` · <span class="muted">sample rendering of demo data</span>` : ""}</div>
       ${d.summary ? `<p style="margin:12px 0 4px">${esc(d.summary)}</p>` : ""}
       <div class="flagline">${d.treatment ? treatmentChip(d.treatment) : ""}${d.confidence != null ? `<span class="chip">confidence ${(d.confidence * 100).toFixed(0)}%</span>` : ""}${(d.flags || []).map((f) => `<span class="flag">${esc(label(f))}</span>`).join("")}${d.overridden ? `<span class="chip">edited by hand</span>` : ""}</div>
+      ${d.duplicate_of ? `<div class="note" style="margin-top:8px"><b>Counted once.</b> This job-sheet invoice matches <button class="link-btn" data-open-doc="${d.duplicate_of}">${esc(d.duplicate_name || "another invoice document")}</button> (same net amount, same job or dates close together), so the dashboard counts that document and not this row.</div>` : ""}
       <form id="docForm">
       <dl class="kv">
         <dt>Type${manual ? " *" : ""}</dt><dd><select name="doc_type" ${manual ? "required" : ""}>${opt(m.doc_types, d.doc_type, manual, "Choose what this document is…")}</select></dd>
@@ -896,6 +897,7 @@
         ? "Figures saved by hand are kept even when the file is re-synced. If you would rather let a model try, “Re-read” sends just this file to the reader you pick (Claude and Gemini read photos and scans; Ollama needs its vision model for those)."
         : "Saved changes are kept even when the file is re-synced. “Re-read” discards them and extracts the file again with the reader you pick — useful for a photo or scan that the text-only Ollama model skipped: send just that file to Claude or Gemini."}</p>`;
     $("#drawerClose").addEventListener("click", closeDrawer);
+    $$("#drawer [data-open-doc]").forEach((b) => b.addEventListener("click", () => openDoc(+b.dataset.openDoc)));
     const sheetsBtn = $("#showSheets");
     if (sheetsBtn) sheetsBtn.addEventListener("click", () => { closeDrawer(); $("#docSearch").value = d.name + " ›"; $("#docStatus").value = ""; showView("documents"); loadDocs(); });
     const dp = $("#drawerPreview"); if (dp) dp.addEventListener("click", () => openPreview(d));

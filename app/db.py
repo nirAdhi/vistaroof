@@ -154,7 +154,8 @@ _MIGRATIONS = {
                 ("ms_link", "TEXT"), ("ms_location", "TEXT"), ("ms_tenant", "TEXT"), ("ms_upload", "INTEGER DEFAULT 1"),
                 ("position", "INTEGER"),  # card / sync order (Admin ▲ ▼); NULL = after the positioned ones, by id
                 ("last_change_found", "TEXT")],  # when the watcher last saw a change in this source (and started its sync)
-    "documents": [("uploaded_by", "TEXT"), ("attempts", "INTEGER NOT NULL DEFAULT 0")],
+    "documents": [("uploaded_by", "TEXT"), ("attempts", "INTEGER NOT NULL DEFAULT 0"),
+                  ("duplicate_of", "INTEGER")],  # a job-sheet invoice row that doubles an invoice document: counted once (app/dedupe.py)
     "sync_runs": [("source_ref", "INTEGER"), ("source_name", "TEXT"), ("force", "INTEGER DEFAULT 0"), ("message", "TEXT"),
                   ("removed", "INTEGER DEFAULT 0"), ("trigger", "TEXT"), ("files", "TEXT")],
 }
@@ -644,9 +645,9 @@ _DOC_LIST_COLUMNS = ", ".join(
         "id", "source", "source_ref", "source_id", "name", "mime", "folder", "web_link", "size", "modified_at", "status", "error",
         "processed_at", "doc_type", "direction", "treatment", "sign", "counterparty", "counterparty_role", "document_number",
         "issue_date", "due_date", "currency", "subtotal", "vat_amount", "total", "net_amount", "amount_paid", "payment_status",
-        "category", "project", "summary", "confidence", "flags", "overridden", "uploaded_by", "model",
+        "category", "project", "summary", "confidence", "flags", "overridden", "uploaded_by", "model", "duplicate_of",
     )
-)
+) + ", (SELECT x.name FROM documents x WHERE x.id = d.duplicate_of) AS duplicate_name"  # nosec B608 - constant fragment, no user input
 
 
 def get_document(doc_id: int) -> dict[str, Any] | None:
@@ -689,10 +690,38 @@ def all_done_documents() -> list[dict[str, Any]]:
         rows = conn.execute(
             """SELECT id, source_ref, name, folder, web_link, doc_type, direction, treatment, sign, counterparty,
                       counterparty_role, document_number, issue_date, due_date, currency, subtotal, vat_amount, total,
-                      net_amount, amount_paid, payment_status, category, project, summary, confidence, flags, modified_at
+                      net_amount, amount_paid, payment_status, category, project, summary, confidence, flags, modified_at,
+                      model, duplicate_of
                FROM documents WHERE status='done'"""
         ).fetchall()
         return [row_to_dict(r) for r in rows]
+
+
+def sales_invoices_for_dedupe() -> list[dict[str, Any]]:
+    """The done sales invoices with what dedupe.find_duplicates compares (amount, date, site words, model)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, model, doc_type, net_amount, issue_date, counterparty, project, name, summary, duplicate_of "
+            "FROM documents WHERE status='done' AND doc_type='sales_invoice'"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def set_duplicates(mapping: dict[int, int], candidate_ids: list[int]) -> int:
+    """Write the duplicate marks for the candidates: ``mapping`` rows get their match, every other candidate is
+    cleared. Returns how many rows changed."""
+    changed = 0
+    with connect() as conn:
+        for doc_id in candidate_ids:
+            target = mapping.get(doc_id)
+            cur = conn.execute("SELECT duplicate_of FROM documents WHERE id=?", (doc_id,)).fetchone()
+            if cur is None or cur["duplicate_of"] == target:
+                continue
+            conn.execute("UPDATE documents SET duplicate_of=? WHERE id=?", (target, doc_id))
+            changed += 1
+    if changed:
+        _touch()
+    return changed
 
 
 def status_counts() -> dict[str, int]:

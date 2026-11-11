@@ -103,7 +103,14 @@ RCT tax, flagged), the site as the customer and "Site (job N)" as its project �
 revenue, monthly figures, top customers, Companies and the Jobs tab come straight from the sheet; the sheet document itself is the job record (type other, counts
 nothing) with the contract value, final agreed figure, works to date per valuation and balance due in
 its summary. Reader shown as `jobsheet`, confidence 100 %. A hand correction on an invoice row is kept
-across syncs; a column removed from the sheet is removed from the ledger. A sheet deleted from the workbook is removed on the next sync; a changed
+across syncs; a column removed from the sheet is removed from the ledger.
+
+**Counted once.** When the same invoice is in the ledger twice — a job-sheet row and the invoice PDF from
+the Invoices library — the sheet row is marked as a duplicate of the PDF (`app/dedupe.py`: same net
+amount to the cent, and dates within 60 days or the PDF naming the site) and the dashboard counts the
+PDF only; the row stays in the Documents list with a "counted once" chip that links to the PDF. The
+marks are recomputed after every sync, re-read and hand edit, so a deleted PDF or a corrected amount
+takes effect at once; the Sync tab's totals report how many rows are counted once. A sheet deleted from the workbook is removed on the next sync; a changed
 workbook re-reads its sheets; hand entries on a sheet document are kept. A two-sheet statement or
 an invoice with a "Rates" sheet stays one document. A job summary sheet is read as type *other*
 with the site and job number as the job, the contract value as the total and a one-line summary
