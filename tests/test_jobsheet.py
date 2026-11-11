@@ -91,6 +91,7 @@ def test_job_sheets_become_sales_invoices_in_the_ledger_without_a_model(admin, f
     assert inv2["doc_type"] == "sales_invoice" and inv2["treatment"] == "revenue" and inv2["net_amount"] == 6659.5 and inv2["total"] == 6659.5
     assert inv2["issue_date"] == "2021-03-16" and inv2["payment_status"] == "paid" and inv2["amount_paid"] == 6659.5 and inv2["project"] == "Bakers Yard (job 101)"
     assert "rct_tax_deducted" in inv2["flags"] and inv2["model"] == "jobsheet" and inv2["folder"] == book["folder"]
+    assert inv2["counterparty"] == "Bakers Yard" and job["counterparty"] == "Bakers Yard"  # the site is the customer
     inv9 = docs["Vista Job Summary.xlsx › 101 › Invoice 9"]
     assert inv9["payment_status"] == "unpaid" and inv9["amount_paid"] is None
     assert docs["Vista Job Summary.xlsx › 102 › Invoice 1"]["net_amount"] == 12000
@@ -100,6 +101,8 @@ def test_job_sheets_become_sales_invoices_in_the_ledger_without_a_model(admin, f
     assert s["totals"]["revenue"] == 20000
     jobs = {p["name"]: p for p in s["projects"]}
     assert jobs["Oak Drive (job 102)"]["revenue"] == 20000
+    assert {c["name"]: c["amount"] for c in s["top_customers"]} == {"Oak Drive": 20000}
+    assert any(c["name"] == "Bakers Yard" and c["revenue"] == 31776.57 for c in admin.get("/api/companies").json())
     assert admin.get("/api/summary?from=2021-01-01&to=2021-12-31").json()["totals"]["revenue"] == 6659.5 + 5767.07
     # the invoice row previews as its sheet, re-reads from the sheet, and keeps a hand correction across syncs
     r = admin.get(f"/api/documents/{inv2['id']}/preview")

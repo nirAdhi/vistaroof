@@ -99,8 +99,8 @@ job-costing layout: SITE / JOB NO, CONTRACT VALUE/SUM, VALUATION columns, INVOIC
 "INVOICE AMOUNT Excl VAT", DATE and "PAID N/Y" rows) is parsed cell by cell (`app/jobsheet.py`):
 every invoice column with an amount becomes a **sales invoice** document named
 "Book.xlsx › 101 › Invoice 4" — net amount, invoice date, paid or unpaid (a `**Y` is paid less 20%
-RCT tax, flagged), the job as its project — so the dashboard's revenue, monthly figures and the Jobs
-tab come straight from the sheet; the sheet document itself is the job record (type other, counts
+RCT tax, flagged), the site as the customer and "Site (job N)" as its project — so the dashboard's
+revenue, monthly figures, top customers, Companies and the Jobs tab come straight from the sheet; the sheet document itself is the job record (type other, counts
 nothing) with the contract value, final agreed figure, works to date per valuation and balance due in
 its summary. Reader shown as `jobsheet`, confidence 100 %. A hand correction on an invoice row is kept
 across syncs; a column removed from the sheet is removed from the ledger. A sheet deleted from the workbook is removed on the next sync; a changed

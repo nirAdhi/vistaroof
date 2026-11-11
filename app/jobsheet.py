@@ -198,18 +198,19 @@ def job_fields(parsed: dict[str, Any]) -> dict[str, Any]:
     if parsed.get("balance_due") is not None:
         bits.append(f"balance due {_eur(parsed['balance_due'])}")
     return {
-        "doc_type": "other", "direction": "none", "payment_status": "not_applicable", "counterparty": None,
-        "counterparty_role": None, "document_number": f"Job {parsed['job_no']}" if parsed.get("job_no") else None,
+        "doc_type": "other", "direction": "none", "payment_status": "not_applicable", "counterparty": parsed.get("site"),
+        "counterparty_role": "customer", "document_number": f"Job {parsed['job_no']}" if parsed.get("job_no") else None,
         "issue_date": last, "project": job_name(parsed), "total": parsed.get("final_agreed") or parsed["contract"].get("value"),
         "summary": "; ".join(bits) + ".", "confidence": 1.0, "flags": ["job_summary_sheet"], "raw": parsed,
     }
 
 
 def invoice_fields(parsed: dict[str, Any], inv: dict[str, Any]) -> dict[str, Any]:
-    """One invoice column as a sales invoice: net amount (the sheet carries no VAT), its date, paid or not."""
+    """One invoice column as a sales invoice: net amount (the sheet carries no VAT), its date, paid or not. The site
+    is the customer (the sheet names nobody else: the job is invoiced to whoever the site belongs to)."""
     flags = ["job_summary_sheet", "amount_excl_vat_only"] + (["rct_tax_deducted"] if inv.get("rct_deducted") else [])
     return {
-        "doc_type": "sales_invoice", "direction": "money_in", "counterparty": None, "counterparty_role": "customer",
+        "doc_type": "sales_invoice", "direction": "money_in", "counterparty": parsed.get("site"), "counterparty_role": "customer",
         "document_number": inv["label"], "issue_date": inv["date"], "project": job_name(parsed), "subtotal": inv["net"],
         "vat_amount": None, "total": inv["net"], "amount_paid": inv["net"] if inv["payment_status"] == "paid" else None,
         "payment_status": inv["payment_status"], "category": None, "confidence": 1.0, "flags": flags,
