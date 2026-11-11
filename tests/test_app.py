@@ -370,6 +370,25 @@ def test_a_workbook_with_a_sheet_per_job_is_read_sheet_by_sheet(admin, fresh_db,
     assert names["Vista Job Summary.xlsx"] == "done" and not any("›" in k for k in names)
 
 
+def test_cards_can_be_reordered_and_sync_all_follows_that_order(admin, fresh_db, fake_claude, tmp_path):
+    folders = []
+    for name in ("HRAccounts", "VistaTurnover", "Receipts"):
+        (tmp_path / name).mkdir(); (tmp_path / name / f"{name}.txt").write_text("invoice total 10", encoding="utf-8")
+        folders.append(admin.post("/api/admin/sources", json={"kind": "local", "name": name, "local_folder": str(tmp_path / name)}).json()["id"])
+    hr, vt, rc = folders
+    names = lambda: [s["name"] for s in admin.get("/api/admin/sources").json()]  # noqa: E731
+    assert names() == ["HRAccounts", "VistaTurnover", "Receipts"]
+    assert admin.post(f"/api/admin/sources/{hr}/move?direction=up").json()["moved"] is False  # already first
+    assert admin.post(f"/api/admin/sources/{vt}/move?direction=up").json()["order"] == [vt, hr, rc]
+    assert admin.post(f"/api/admin/sources/{rc}/move?direction=up").json()["order"] == [vt, rc, hr]
+    assert admin.post(f"/api/admin/sources/{rc}/move?direction=sideways").status_code == 422
+    assert names() == ["VistaTurnover", "Receipts", "HRAccounts"]
+    assert [s["name"] for s in admin.get("/api/config").json()["sources"]] == ["VistaTurnover", "Receipts", "HRAccounts"]
+    admin.post("/api/admin/sync-all"); wait_sync()
+    runs = admin.get("/api/admin/runs").json()  # newest first
+    assert [r["source_name"] for r in runs[:3]] == ["HRAccounts", "Receipts", "VistaTurnover"]
+
+
 def test_drive_not_connected_is_reported_cleanly(admin, fresh_db, fake_claude):
     admin.post("/api/admin/google-client", json={"json_text": json.dumps(GOOGLE_CLIENT)})
     src = admin.post("/api/admin/sources", json={"kind": "drive", "name": "Unconnected"}).json()

@@ -340,6 +340,9 @@ body.signed-out #aiBadge, body.signed-out .drawer, body.signed-out .modal, body.
 .form .actions { display: flex; align-items: center; gap: 10px; }
 .card h3 { font-size: 14px; margin-bottom: 8px; }
 .source-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.order-btns { display: flex; flex-direction: column; gap: 0; margin: -4px 0 0 -6px; }
+.order-btns .icon-btn { padding: 0 6px; font-size: 11px; line-height: 16px; color: var(--muted); }
+.order-btns .icon-btn:disabled { opacity: .3; cursor: default; }
 .source-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; margin-bottom: 4px; }
 .source .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
 .src-progress { margin-top: 8px; }

@@ -151,7 +151,8 @@ DOC_COLUMNS = [
 _MIGRATIONS = {
     "sources": [("drive_page_token", "TEXT"), ("last_change_check", "TEXT"),
                 # Microsoft 365 sources: the pasted link, its resolved location (JSON), tenant override, upload flag
-                ("ms_link", "TEXT"), ("ms_location", "TEXT"), ("ms_tenant", "TEXT"), ("ms_upload", "INTEGER DEFAULT 1")],
+                ("ms_link", "TEXT"), ("ms_location", "TEXT"), ("ms_tenant", "TEXT"), ("ms_upload", "INTEGER DEFAULT 1"),
+                ("position", "INTEGER")],  # card / sync order (Admin ▲ ▼); NULL = after the positioned ones, by id
     "documents": [("uploaded_by", "TEXT"), ("attempts", "INTEGER NOT NULL DEFAULT 0")],
     "sync_runs": [("source_ref", "INTEGER"), ("source_name", "TEXT"), ("force", "INTEGER DEFAULT 0"), ("message", "TEXT"),
                   ("removed", "INTEGER DEFAULT 0"), ("trigger", "TEXT"), ("files", "TEXT")],
@@ -184,7 +185,7 @@ _TABLES = {"settings", "sources", "documents", "sync_runs", "documents_v1"}
 # turn a dict key into SQL.
 _SOURCE_COLUMNS = {"name", "enabled", "drive_folder_id", "local_folder", "token_json", "account_email", "last_sync_at",
                    "last_status", "last_error", "drive_page_token", "last_change_check",
-                   "ms_link", "ms_location", "ms_tenant", "ms_upload"}
+                   "ms_link", "ms_location", "ms_tenant", "ms_upload", "position"}
 _RUN_COLUMNS = {"finished_at", "total", "processed", "skipped", "errors", "removed", "status", "message", "files"}
 _USER_COLUMNS = {"name", "role", "active", "password_hash"}
 USER_ROLES = ("user", "admin")
@@ -262,6 +263,22 @@ def update_source(source_id: int, **fields: Any) -> None:
         conn.execute(f"UPDATE sources SET {sets} WHERE id=?", (*fields.values(), source_id))  # nosec B608 - names whitelisted, values bound
 
 
+def move_source(source_id: int, direction: int) -> bool:
+    """Move a source one place up (-1) or down (+1) in the card / sync order. False when it is already at that end."""
+    with connect() as conn:
+        ids = [r["id"] for r in conn.execute("SELECT id FROM sources ORDER BY position IS NULL, position, id").fetchall()]
+        if source_id not in ids:
+            return False
+        i = ids.index(source_id)
+        j = i + direction
+        if j < 0 or j >= len(ids):
+            return False
+        ids[i], ids[j] = ids[j], ids[i]
+        for pos, sid in enumerate(ids):  # positions are rewritten for every row, so the order is total from now on
+            conn.execute("UPDATE sources SET position=? WHERE id=?", (pos, sid))
+    return True
+
+
 def get_source(source_id: int) -> dict[str, Any] | None:
     with connect() as conn:
         row = conn.execute("SELECT * FROM sources WHERE id=?", (source_id,)).fetchone()
@@ -278,7 +295,7 @@ def list_sources(include_secrets: bool = False) -> list[dict[str, Any]]:
                       (SELECT COUNT(*) FROM documents d WHERE d.source_ref = s.id AND d.status='error') AS error_count,
                       (SELECT COUNT(*) FROM documents d WHERE d.source_ref = s.id AND d.status='skipped') AS skipped_count,
                       (SELECT COUNT(*) FROM documents d WHERE d.source_ref = s.id AND d.status IN ('pending', 'processing')) AS waiting_count
-               FROM sources s ORDER BY s.id"""
+               FROM sources s ORDER BY s.position IS NULL, s.position, s.id"""  # the card order is the sync order (sync.start)
         ).fetchall()
         # the last run of each source, for the card's "100% complete · N read · finished at" line
         last = {r["source_ref"]: dict(r) for r in conn.execute(

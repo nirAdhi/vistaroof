@@ -1151,6 +1151,15 @@ def admin_watch_now() -> dict[str, Any]:
     return {"changed_sources": changed, "started": started}
 
 
+@app.post("/api/admin/sources/{source_id}/move", dependencies=[Depends(require_admin)])
+def admin_move_source(source_id: int, direction: str = Query(..., pattern="^(up|down)$")) -> dict[str, Any]:
+    """Move a card one place up or down. The card order is the order "Sync all sources" (and the auto-sync) work through."""
+    if db.get_source(source_id) is None:
+        raise HTTPException(404, "source not found")
+    moved = db.move_source(source_id, -1 if direction == "up" else 1)
+    return {"moved": moved, "order": [s["id"] for s in db.list_sources()]}
+
+
 @app.post("/api/admin/sources/{source_id}/disconnect", dependencies=[Depends(require_admin)])
 def admin_disconnect_source(source_id: int) -> dict[str, Any]:
     if db.get_source(source_id) is None:

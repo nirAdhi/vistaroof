@@ -175,10 +175,14 @@
     $("#addMsNote").innerHTML = s.has_ms_client ? "" : `Fill in the app registration under <a href="#microsoft" data-go="microsoft">Microsoft setup</a> first.`;
     $$("#addMsNote [data-go]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); showSection("microsoft"); }));
     if (!list.length) { $("#sourceList").innerHTML = `<div class="card empty">No sources yet. Add a SharePoint / OneDrive folder, a Google Drive or a local folder below.</div>`; return; }
-    $("#sourceList").innerHTML = list.map((src) => `
+    $("#sourceList").innerHTML = (list.length > 1 ? `<p class="muted small" style="margin:0 0 8px">Cards are synced top to bottom: use ▲ ▼ to put the folder that matters most first.</p>` : "") + list.map((src, i) => `
       <div class="card source ${src.enabled ? "" : "disabled"}" data-id="${src.id}">
         <div class="source-head">
-          <div>
+          <div class="order-btns" title="${running ? "Wait for the running sync to finish" : "Sync order: cards are synced top to bottom"}">
+            <button class="icon-btn" data-act="up" aria-label="Move up (synced earlier)" ${i === 0 || running ? "disabled" : ""}>▲</button>
+            <button class="icon-btn" data-act="down" aria-label="Move down (synced later)" ${i === list.length - 1 || running ? "disabled" : ""}>▼</button>
+          </div>
+          <div style="flex:1">
             <div class="source-title"><span class="chip ${(KIND[src.kind] || ["", "pipe"])[1]}">${kindLabel(src.kind)}</span> <b>${esc(src.name)}</b> ${statusBadge(src)} ${src.enabled ? "" : `<span class="badge muted">Disabled</span>`}</div>
             <div class="muted small">${sourceWhere(src)}</div>
             <div class="muted small">${src.doc_count} files known · <a href="/?source=${src.id}&status=done#documents">${src.done_count} read</a>${src.skipped_count ? ` · <a href="/?source=${src.id}&status=skipped#documents">${src.skipped_count} skipped</a>` : ""}${src.error_count ? ` · <a class="neg" href="/?source=${src.id}&status=error#documents">${src.error_count} errors</a>` : ""}${src.waiting_count ? ` · ${src.waiting_count} waiting` : ""} · last sync ${when(src.last_sync_at)}${isCloud(src) && src.connected ? ` · watch ${when(src.last_change_check)}` : ""}${src.last_error ? ` · <span class="neg">${esc(src.last_error)}</span>` : ""}</div>
@@ -202,6 +206,8 @@
       if (running) { card.querySelectorAll("a.is-disabled").forEach((a) => a.addEventListener("click", (e) => e.preventDefault())); return; }  // nothing is wired while busy
       card.querySelector('[data-act="toggle"]').addEventListener("change", (e) => run(api(`/api/admin/sources/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: e.target.checked }) }), e.target.checked ? "Enabled" : "Disabled"));
       card.querySelector('[data-act="sync"]').addEventListener("click", () => run(api(`/api/admin/sources/${id}/sync`, { method: "POST" }), "Sync started"));
+      card.querySelector('[data-act="up"]').addEventListener("click", () => run(api(`/api/admin/sources/${id}/move?direction=up`, { method: "POST" }), null));
+      card.querySelector('[data-act="down"]').addEventListener("click", () => run(api(`/api/admin/sources/${id}/move?direction=down`, { method: "POST" }), null));
       card.querySelector('[data-act="force"]').addEventListener("click", () => { if (confirm(`Re-read every file in "${src.name}"? This costs API usage for each document.`)) run(api(`/api/admin/sources/${id}/sync?force=1`, { method: "POST" }), "Full re-read started"); });
       card.querySelector('[data-act="remove"]').addEventListener("click", () => { if (confirm(`Remove "${src.name}" and delete its ${src.doc_count} documents from the ledger?`)) run(api(`/api/admin/sources/${id}`, { method: "DELETE" }), "Source removed"); });
       const dis = card.querySelector('[data-act="disconnect"]'); if (dis) dis.addEventListener("click", () => run(api(`/api/admin/sources/${id}/disconnect`, { method: "POST" }), "Disconnected"));
