@@ -110,6 +110,27 @@ checked against the workbook. A job sheet a model read before the parser existed
 next ordinary sync (no Full re-read needed); columns headed Total / Total Paid / Gross Due /
 Retention Due are totals, not invoices, and an empty or 0.00 column is nothing invoiced.
 
+**Turnover tables (one row per job) are read without a model too.** Vista's newer workbook layout
+has a "Turnover and WIH <year>" sheet per year and a "Retention" sheet, each a table with a header row
+(Job Nr, Project, Client, Total Contract Value, Valuations to Date, Paid to Date, Current Due, Overdue,
+Retention Due, or Turnover / WIH / month columns). `app/jobtable.py` recognises such a sheet by its
+header (columns by name, any order; unknown figure columns are kept in the document's raw data) and
+turns every job row into documents: on a year sheet each turnover figure is a **sales invoice**
+("Book.xlsx › Turnover and WIH 2026 › 101 Bakers Yard › Turnover 2026", the Client as the customer,
+"Project (job N)" as the project, dated 1 January of the sheet's year, or the 1st of the month for a
+month column; "2020-21" counts as 2021), on any other sheet the row is the job's record ("Book.xlsx ›
+Retention › 101 Bakers Yard": contract value, valued to date, paid, due, retention and the free-text
+note in its summary). Reader shown as `jobtable`. Turnover figures are not invoices, so they never
+count as money owed. The workbook row's note reads "8 separate sheets: 7 turnover tables with 1,890
+job rows and 1,620 turnover figures".
+
+**Workbook layout (Admin → source card).** Auto-detect reads both layouts. When a folder holds both
+the old per-job workbook and the new tables, the same job would be counted twice, so the card's
+"Workbook layout" selector picks which one carries the revenue: *Job summary sheets* (turnover tables
+still give job records, no revenue rows) or *Turnover tables* (job sheets still give job records, no
+invoice rows). Changing it queues the source's workbook and sheet rows for re-reading and starts a
+sync of that source; hand-corrected rows are kept.
+
 Previews of spreadsheets are HTML grids (`app/sheetview.py`), not text dumps: the workbook row shows
 every sheet with a sheet list, a sheet document its sheet, and a job summary sheet opens as a page —
 job and site, contract value / cost / mark-up / margin, final agreed, balance due, an invoices table

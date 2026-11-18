@@ -77,8 +77,9 @@ def _sheet_page(row: dict[str, Any], content: FileContent) -> tuple[bytes, str] 
 
     _, part = textract.split_ref(row["source_id"] or "")
     if part is not None and content.text is not None:
-        sheet, _, inv = part.partition("#inv:")
-        return sheetview.render([(sheet, content.text)], row["name"], focus_sheet=sheet, focus_inv=inv or None).encode("utf-8"), "text/html"
+        sheet, keys = textract.part_ref(part)
+        return sheetview.render([(sheet, content.text)], row["name"], focus_sheet=sheet, focus_inv=keys.get("inv"),
+                                focus_row=keys.get("row")).encode("utf-8"), "text/html"
     if textract.is_spreadsheet(content.mime) and content.data is not None:
         return sheetview.render(textract.workbook_sheets(content), row["name"]).encode("utf-8"), "text/html"
     return None

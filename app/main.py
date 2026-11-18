@@ -52,7 +52,7 @@ from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import analytics, ask, backup, config, db, dedupe, demo, extract, gemini, llm, logsetup, microsoft, notify, ollama, previews, repair, settings, sources, sync
+from . import analytics, ask, backup, config, db, dedupe, demo, extract, gemini, jobtable, llm, logsetup, microsoft, notify, ollama, previews, repair, settings, sources, sync
 from .errors import ApiUnavailable
 
 log = logging.getLogger(__name__)
@@ -1003,6 +1003,7 @@ class SourcePatch(BaseModel):
     ms_link: str | None = Field(None, max_length=2000)
     ms_tenant: str | None = Field(None, max_length=200)
     ms_upload: bool | None = None
+    workbook_layout: str | None = Field(None, max_length=20)  # auto / jobsheets / jobtable (app/jobtable.py LAYOUTS)
 
 
 def _check_ms_link(value: str | None) -> str | None:
@@ -1107,7 +1108,20 @@ def admin_patch_source(source_id: int, body: SourcePatch) -> dict[str, Any]:
                 changes["last_error"] = None
             except Exception as exc:
                 raise HTTPException(400, f"could not open that link with the connected account: {exc}")
+    relayout = False
+    if "workbook_layout" in changes:
+        layout = (changes["workbook_layout"] or "auto").strip().lower()
+        if layout not in jobtable.LAYOUTS:
+            raise HTTPException(400, f"workbook layout must be one of {', '.join(jobtable.LAYOUTS)}")
+        changes["workbook_layout"] = layout
+        relayout = layout != (src.get("workbook_layout") or "auto")
     db.update_source(source_id, **changes)
+    if relayout:
+        # the workbooks are walked again under the new rule: sheet rows back to pending, then a sync of this source
+        n = db.reset_workbook_rows(source_id)
+        log.info("source %s: workbook layout now %s, %d workbook/sheet rows queued for re-reading", source_id, changes["workbook_layout"], n)
+        if n and src.get("enabled") and not sync.status()["running"]:
+            sync.start([source_id], trigger="manual")
     return _public_source(source_id)
 
 

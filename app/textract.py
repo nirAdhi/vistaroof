@@ -140,10 +140,25 @@ def sheet_ref(source_id: str, sheet: str) -> str:
     return f"{source_id}{SHEET_SEP}{sheet}"
 
 
+def part_ref(part: str | None) -> tuple[str | None, dict[str, str]]:
+    """The sheet name and the keys of a document inside a sheet: "101#inv:C" → ("101", {"inv": "C"}) for an invoice
+    column of a job sheet, "Retention#row:101#col:turnover" → ("Retention", {"row": "101", "col": "turnover"}) for a
+    job row / turnover figure of a turnover table."""
+    if part is None:
+        return None, {}
+    pieces = re.split(r"#(inv|row|col):", part)
+    return pieces[0], dict(zip(pieces[1::2], pieces[2::2]))
+
+
 def should_split(sheets: list[tuple[str, str]]) -> bool:
     """Read a workbook sheet by sheet when its sheets are separate records: several sheets built from the same
     template (same first line, e.g. "JOB SUMMARY" on every job's sheet), or more text than one document can be.
-    A two-sheet statement (data + summary) or an invoice with a "Rates" sheet stays one document."""
+    A two-sheet statement (data + summary) or an invoice with a "Rates" sheet stays one document. A workbook with a
+    JOB SUMMARY sheet or a turnover table (one row per job) is always read sheet by sheet: those are parsed."""
+    from . import jobsheet, jobtable
+
+    if any(jobsheet.is_job_summary(t) or jobtable.is_job_table(t) for _, t in sheets):
+        return True
     if len(sheets) < 2:
         return False
     if sum(len(t) for _, t in sheets) > MAX_TEXT_CHARS:
@@ -162,7 +177,7 @@ def fetch_part(source, meta: FileMeta) -> FileContent:
         return source.fetch(meta)
     from dataclasses import replace
 
-    sheet = sheet.split("#inv:", 1)[0]  # an invoice row of a job sheet ("…#sheet:101#inv:C") previews / re-reads as its sheet
+    sheet, _ = part_ref(sheet)  # an invoice column of a job sheet or a job row of a turnover table previews / re-reads as its sheet
     content = source.fetch(replace(meta, source_id=base))
     for name, text in workbook_sheets(content):
         if name == sheet:

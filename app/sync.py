@@ -37,7 +37,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from . import db, dedupe, extract, jobsheet, llm, notify, ollama, settings, textract
+from . import db, dedupe, extract, jobsheet, jobtable, llm, notify, ollama, settings, textract
 from .sources import SUPPORTED_MIMES, FileContent, FileMeta, open_source
 
 log = logging.getLogger(__name__)
@@ -371,7 +371,9 @@ def _process_workbook(source, meta: FileMeta, doc_id: int, sheets: list[tuple[st
     """A workbook whose sheets are separate records (one job summary per sheet): one document per sheet, each read on
     its own; the workbook's own row becomes ``split`` and points at them. Sheets that vanished are marked removed."""
     present: set[str] = set()
-    stats = {"jobs": 0, "invoices": 0, "empty": 0, "model": 0, "other": 0}
+    stats = {"jobs": 0, "invoices": 0, "empty": 0, "tables": 0, "rows": 0, "figures": 0, "model": 0, "other": 0}
+    layout = workbook_layout(meta.source_ref)  # which layout carries the revenue (Admin → source card → Workbook layout)
+    invoices_on, revenue_on = layout in ("auto", "jobsheets"), layout in ("auto", "jobtable")
     for name, text in sheets:
         if _state["stop_requested"]:
             db.set_status(doc_id, "pending")
@@ -380,30 +382,45 @@ def _process_workbook(source, meta: FileMeta, doc_id: int, sheets: list[tuple[st
         present.add(child.source_id)
         cid = db.upsert_file_metadata(child.as_dict())
         job = jobsheet.is_job_summary(text)
+        table = None if job else jobtable.parse(name, text)
         if job:
             stats["jobs"] += 1
+        if table:
+            stats["tables"] += 1
         if not db.needs_processing(cid, force=force):
-            # A job sheet that a *model* read before the parser existed is read again by the parser (exact figures,
-            # one invoice document per column); a hand-corrected sheet is left alone.
+            # A job sheet / turnover table that a *model* read before the parsers existed is read again by the parser
+            # (exact figures, one document per invoice column or job row); a hand-corrected sheet is left alone.
             row = db.get_document(cid) or {}
-            if job and row.get("model") != jobsheet.MODEL and not row.get("overridden"):
-                log.info("%s: job sheet read by %s before, now parsed", child.name, row.get("model"))
+            if (job or table) and row.get("model") not in (jobsheet.MODEL, jobtable.MODEL) and not row.get("overridden"):
+                log.info("%s: %s read by %s before, now parsed", child.name, "job sheet" if job else "turnover table", row.get("model"))
             else:
                 if job:
-                    ids = _sheet_invoice_ids(child, text)
+                    ids = _sheet_invoice_ids(child, text) if invoices_on else set()
                     present.update(ids)
                     stats["invoices"] += len(ids)
                     stats["empty"] += 1 if not ids else 0
+                if table:
+                    ids = _table_row_ids(child, table, revenue_on)
+                    present.update(ids)
+                    stats["rows"] += len(table["jobs"])
+                    stats["figures"] += sum(1 for i in ids if jobtable.COL_SEP in i)
                 _bump("skipped")
                 continue
         _set(current_file=child.name)
         db.set_status(cid, "processing")
         try:
             if job:  # Cormac's job sheets: figures taken straight from the cells, no model
-                ids = _read_job_sheet(child, cid, text, force)
+                ids = _read_job_sheet(child, cid, text, force, invoices=invoices_on)
                 present.update(ids)
                 stats["invoices"] += len(ids)
                 stats["empty"] += 1 if not ids else 0
+                _bump("processed")
+                continue
+            if table:  # the turnover workbook: one row per job, figures by column name
+                ids = _read_job_table(child, cid, table, force, revenue=revenue_on)
+                present.update(ids)
+                stats["rows"] += len(table["jobs"])
+                stats["figures"] += sum(1 for i in ids if jobtable.COL_SEP in i)
                 _bump("processed")
                 continue
             stats["model"] += 1
@@ -424,13 +441,19 @@ def _process_workbook(source, meta: FileMeta, doc_id: int, sheets: list[tuple[st
             db.mark_error(cid, msg)
             _note_error(child.name, msg)
     gone = db.remove_missing_sheets(meta.source_ref, meta.source_id, present)
+    parts = []
     if stats["jobs"]:
-        detail = (f"{stats['jobs']} job summary sheets with {stats['invoices']} invoices"
-                  + (f", {stats['empty']} of them with nothing invoiced yet" if stats["empty"] else ""))
-        if len(sheets) - stats["jobs"]:
-            detail += f"; {len(sheets) - stats['jobs']} other sheets read by the document reader"
-    else:
-        detail = "read by the document reader"
+        parts.append(f"{stats['jobs']} job summary sheets with {stats['invoices']} invoices"
+                     + (f", {stats['empty']} of them with nothing invoiced yet" if stats["empty"] else "")
+                     + ("" if invoices_on else " (not counted: the Turnover tables layout is selected)"))
+    if stats["tables"]:
+        parts.append(f"{stats['tables']} turnover tables with {stats['rows']} job rows"
+                     + (f" and {stats['figures']} turnover figures" if stats["figures"] else "")
+                     + ("" if revenue_on else " (figures not counted: the Job summary sheets layout is selected)"))
+    rest = len(sheets) - stats["jobs"] - stats["tables"]
+    if parts and rest:
+        parts.append(f"{rest} other sheets read by the document reader")
+    detail = "; ".join(parts) if parts else "read by the document reader"
     db.mark_split(doc_id, len(sheets), detail)
     _bump("skipped")  # the workbook row itself holds no figures
     log.info("%s: read as %d sheets (%s; %d no longer present)", meta.name, len(sheets), detail or "no job sheets", gone)
@@ -443,13 +466,64 @@ def _sheet_invoice_ids(child: FileMeta, text: str) -> set[str]:
     return {f"{child.source_id}{jobsheet.INV_SEP}{inv['key']}" for inv in parsed.get("invoices", [])}
 
 
-def _read_job_sheet(child: FileMeta, cid: int, text: str, force: bool) -> set[str]:
+def workbook_layout(source_ref: int | None) -> str:
+    """Which workbook layout carries the company's revenue for this source: 'auto' (both), 'jobsheets' (one JOB
+    SUMMARY sheet per job, each invoice column counted) or 'jobtable' (turnover tables, one row per job)."""
+    src = db.get_source(source_ref) if source_ref else None
+    layout = (src or {}).get("workbook_layout") or "auto"
+    return layout if layout in jobtable.LAYOUTS else "auto"
+
+
+def _child_meta(child: FileMeta, suffix: str, name: str) -> FileMeta:
+    return FileMeta(source=child.source, source_ref=child.source_ref, source_id=f"{child.source_id}{suffix}", name=name, mime=child.mime,
+                    folder=child.folder, web_link=child.web_link, size=None, modified_at=child.modified_at, uploaded_by=child.uploaded_by)
+
+
+def _table_row_ids(child: FileMeta, parsed: dict, revenue: bool) -> set[str]:
+    """The source_ids of the documents a turnover table carries (to keep them when the sheet is unchanged)."""
+    ids: set[str] = set()
+    for job in parsed["jobs"]:
+        rows = jobtable.turnover_rows(parsed, job) if revenue and parsed["has_turnover"] else []
+        ids.update(f"{child.source_id}{jobtable.ROW_SEP}{job['job_no']}{jobtable.COL_SEP}{r['key']}" for r in rows)
+        if not rows:
+            ids.add(f"{child.source_id}{jobtable.ROW_SEP}{job['job_no']}")
+    return ids
+
+
+def _read_job_table(child: FileMeta, cid: int, parsed: dict, force: bool, revenue: bool = True) -> set[str]:
+    """A turnover table: the sheet document summarises it; a job row of a year sheet becomes one sales invoice per
+    turnover figure ("Book.xlsx › Turnover and WIH 2026 › 101 Bakers Yard › Turnover 2026"), any other row the
+    job's record ("Book.xlsx › Retention › 101 Bakers Yard"). ``revenue`` False = job records only (the owner
+    chose the job summary sheets as the source of revenue). Returns the ids present."""
+    db.save_extraction(cid, extract.derive(jobtable.sheet_fields(parsed, revenue)), jobtable.MODEL)
+    present: set[str] = set()
+    for job in parsed["jobs"]:
+        base = f"{child.source_id}{jobtable.ROW_SEP}{job['job_no']}"
+        label = f"{job['job_no']} {job['project']}".strip() if job.get("project") else f"job {job['job_no']}"
+        rows = jobtable.turnover_rows(parsed, job) if revenue and parsed["has_turnover"] else []
+        for rev in rows:
+            meta = _child_meta(child, f"{jobtable.ROW_SEP}{job['job_no']}{jobtable.COL_SEP}{rev['key']}", f"{child.name} › {label} › {rev['label']}")
+            present.add(meta.source_id)
+            rid = db.upsert_file_metadata(meta.as_dict())
+            if db.needs_processing(rid, force=force):  # a hand-corrected figure stays as corrected
+                db.save_extraction(rid, extract.derive(jobtable.revenue_fields(parsed, job, rev)), jobtable.MODEL)
+        if not rows:
+            meta = _child_meta(child, f"{jobtable.ROW_SEP}{job['job_no']}", f"{child.name} › {label}")
+            present.add(meta.source_id)
+            rid = db.upsert_file_metadata(meta.as_dict())
+            if db.needs_processing(rid, force=force):
+                db.save_extraction(rid, extract.derive(jobtable.job_fields(parsed, job)), jobtable.MODEL)
+    return present
+
+
+def _read_job_sheet(child: FileMeta, cid: int, text: str, force: bool, invoices: bool = True) -> set[str]:
     """A JOB SUMMARY sheet: the sheet document becomes the job record and every invoice column its own sales
-    invoice document ("Book.xlsx › 101 › Invoice 4", source_id "<sheet>#inv:<column>"). Returns the ids present."""
+    invoice document ("Book.xlsx › 101 › Invoice 4", source_id "<sheet>#inv:<column>"). ``invoices`` False = the
+    job record only (the owner chose the turnover tables as the source of revenue). Returns the ids present."""
     parsed = jobsheet.parse(text) or {}
     db.save_extraction(cid, extract.derive(jobsheet.job_fields(parsed)), jobsheet.MODEL)
     present: set[str] = set()
-    for inv in parsed.get("invoices", []):
+    for inv in parsed.get("invoices", []) if invoices else []:
         inv_meta = FileMeta(source=child.source, source_ref=child.source_ref, source_id=f"{child.source_id}{jobsheet.INV_SEP}{inv['key']}",
                             name=f"{child.name} › {inv['label']}", mime=child.mime, folder=child.folder, web_link=child.web_link,
                             size=None, modified_at=child.modified_at, uploaded_by=child.uploaded_by)
@@ -491,6 +565,25 @@ def reprocess(doc_id: int, provider: str | None = None) -> dict[str, Any]:
                 if inv is None:
                     raise ValueError(f"invoice column {key} is no longer on the sheet")
                 db.save_extraction(doc_id, extract.derive(jobsheet.invoice_fields(parsed, inv)), jobsheet.MODEL)
+            dedupe.refresh()
+            return db.get_document(doc_id) or {}
+        sheet, keys = textract.part_ref(textract.split_ref(meta.source_id)[1])
+        table = jobtable.parse(sheet, content.text) if sheet and content.text is not None else None
+        if table:  # a turnover table, one of its job rows or one of its turnover figures: no model
+            revenue = workbook_layout(meta.source_ref) in ("auto", "jobtable")
+            if "row" not in keys:
+                db.save_extraction(doc_id, extract.derive(jobtable.sheet_fields(table, revenue)), jobtable.MODEL)
+            else:
+                job = next((j for j in table["jobs"] if j["job_no"] == keys["row"]), None)
+                if job is None:
+                    raise ValueError(f"job {keys['row']} is no longer on the sheet")
+                if "col" in keys:
+                    rev = next((x for x in jobtable.turnover_rows(table, job) if x["key"] == keys["col"]), None)
+                    if rev is None:
+                        raise ValueError(f"the {keys['col']} figure for job {keys['row']} is no longer on the sheet")
+                    db.save_extraction(doc_id, extract.derive(jobtable.revenue_fields(table, job, rev)), jobtable.MODEL)
+                else:
+                    db.save_extraction(doc_id, extract.derive(jobtable.job_fields(table, job)), jobtable.MODEL)
             dedupe.refresh()
             return db.get_document(doc_id) or {}
         if textract.is_spreadsheet(content.mime):

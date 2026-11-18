@@ -10,7 +10,7 @@ from __future__ import annotations
 import html
 from typing import Any
 
-from . import jobsheet
+from . import jobsheet, jobtable
 
 _CSS = """
 body{margin:0;padding:14px 16px 24px;background:#fffefb;color:#0b0b0b;font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -47,7 +47,7 @@ def _is_num(s: str) -> bool:
     return jobsheet._num(s) is not None
 
 
-def _grid(text: str, focus_col: int | None = None) -> str:
+def _grid(text: str, focus_col: int | None = None, focus_row: int | None = None) -> str:
     rows = [ln.split(jobsheet.SEP) for ln in text.split("\n")]
     width = max((len(r) for r in rows), default=0)
     head = "".join(f'<th class="col{" focus" if focus_col == i else ""}">{jobsheet._col_letter(i)}</th>' for i in range(width))
@@ -58,7 +58,7 @@ def _grid(text: str, focus_col: int | None = None) -> str:
             v = r[i] if i < len(r) else ""
             cls = ("n" if _is_num(v) else "") + (" focus" if focus_col == i else "")
             cells.append(f'<td class="{cls.strip()}">{_e(v)}</td>')
-        body.append(f'<tr><td class="rown">{n}</td>{"".join(cells)}</tr>')
+        body.append(f'<tr{" class=focus" if focus_row == n - 1 else ""}><td class="rown">{n}</td>{"".join(cells)}</tr>')
     return f'<div class="wrap"><table class="grid"><thead><tr><th></th>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>'
 
 
@@ -91,15 +91,47 @@ def _job_block(parsed: dict[str, Any], focus_inv: str | None) -> str:
     return "".join(out)
 
 
-def render(sheets: list[tuple[str, str]], title: str, focus_sheet: str | None = None, focus_inv: str | None = None) -> str:
+def _table_block(parsed: dict[str, Any], focus_row: str | None) -> str:
+    """A turnover table (app/jobtable.py) as a tidy table: the job, its client and the known figure columns."""
+    keys = [k for k in jobtable.FIGURE_KEYS if k in parsed["columns"]]
+    months = sorted(k for k in parsed["columns"] if k.startswith("month:"))
+    year = parsed.get("year")
+    out = [f"<h1>{_e(parsed['sheet'])}</h1>", f'<div class="sub">{len(parsed["jobs"])} jobs' + (f" · {year}" if year else "") + "</div>"]
+    out.append("<table><thead><tr><th>Job</th><th>Project</th><th>Client</th>"
+               + "".join(f'<th class=n>{_e(jobtable.LABELS[k])}</th>' for k in keys)
+               + "".join(f'<th class=n>{_e(jobtable._MONTHS[int(m[6:]) - 1].title())}</th>' for m in months) + "<th>Note</th></tr></thead><tbody>")
+    for j in parsed["jobs"]:
+        out.append(f'<tr{" class=focus" if focus_row is not None and j["job_no"] == focus_row else ""}><td>{_e(j["job_no"])}</td><td>{_e(j.get("project") or "")}</td>'
+                   f'<td>{_e(j.get("client") or "")}</td>' + "".join(f"<td class=n>{_money(j.get(k))}</td>" for k in keys)
+                   + "".join(f"<td class=n>{_money(j['months'].get(m[6:]))}</td>" for m in months) + f'<td>{_e(j.get("note") or "")}</td></tr>')
+    out.append("</tbody></table>")
+    return "".join(out)
+
+
+def _row_index(text: str, parsed: dict[str, Any], job_no: str | None) -> int | None:
+    """The grid row (0-based) of a job number, for highlighting."""
+    if job_no is None:
+        return None
+    c = parsed["columns"]["job_no"]
+    for i, ln in enumerate(text.split("\n")):
+        cells = ln.split(jobsheet.SEP)
+        if c < len(cells) and cells[c].strip() == job_no:
+            return i
+    return None
+
+
+def render(sheets: list[tuple[str, str]], title: str, focus_sheet: str | None = None, focus_inv: str | None = None,
+           focus_row: str | None = None) -> str:
     """The HTML page for a workbook (every sheet) or one sheet (``focus_sheet``), ``focus_inv`` = the column key of
-    the invoice row being previewed (highlighted in the invoices table and in the grid)."""
+    the invoice row being previewed (highlighted in the invoices table and in the grid), ``focus_row`` = the job
+    number of a turnover-table row being previewed."""
     parts = [f"<!doctype html><html><head><meta charset=utf-8><meta name=viewport content=\"width=device-width\"><title>{_e(title)}</title><style>{_CSS}</style></head><body>"]
     shown = [(n, t) for n, t in sheets if focus_sheet is None or n == focus_sheet]
     if focus_sheet is None and len(shown) > 1:
         parts.append('<div class="nav sub">' + " ".join(f'<a href="#s{i}">{_e(n)}</a>' for i, (n, _) in enumerate(shown)) + "</div>")
     for i, (name, text) in enumerate(shown):
         parsed = jobsheet.parse(text)
+        table = None if parsed else jobtable.parse(name, text)
         if focus_sheet is None:
             parts.append(f'<h2 id="s{i}">Sheet: {_e(name)}</h2>')
         if parsed:
@@ -109,6 +141,9 @@ def render(sheets: list[tuple[str, str]], title: str, focus_sheet: str | None = 
                 focus_col = next((c for c in range(0, 60) if jobsheet._col_letter(c) == focus_inv), None) if hit else None
             parts.append(_job_block(parsed, focus_inv))
             parts.append(f"<details><summary>The sheet as laid out</summary>{_grid(text, focus_col)}</details>")
+        elif table:
+            parts.append(_table_block(table, focus_row))
+            parts.append(f"<details><summary>The sheet as laid out</summary>{_grid(text, None, _row_index(text, table, focus_row))}</details>")
         else:
             parts.append(_grid(text))
     if not shown:

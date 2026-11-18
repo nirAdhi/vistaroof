@@ -153,7 +153,8 @@ _MIGRATIONS = {
                 # Microsoft 365 sources: the pasted link, its resolved location (JSON), tenant override, upload flag
                 ("ms_link", "TEXT"), ("ms_location", "TEXT"), ("ms_tenant", "TEXT"), ("ms_upload", "INTEGER DEFAULT 1"),
                 ("position", "INTEGER"),  # card / sync order (Admin ▲ ▼); NULL = after the positioned ones, by id
-                ("last_change_found", "TEXT")],  # when the watcher last saw a change in this source (and started its sync)
+                ("last_change_found", "TEXT"),  # when the watcher last saw a change in this source (and started its sync)
+                ("workbook_layout", "TEXT")],  # which workbook layout carries the revenue: auto / jobsheets / jobtable (app/jobtable.py)
     "documents": [("uploaded_by", "TEXT"), ("attempts", "INTEGER NOT NULL DEFAULT 0"),
                   ("duplicate_of", "INTEGER")],  # a job-sheet invoice row that doubles an invoice document: counted once (app/dedupe.py)
     "sync_runs": [("source_ref", "INTEGER"), ("source_name", "TEXT"), ("force", "INTEGER DEFAULT 0"), ("message", "TEXT"),
@@ -187,7 +188,7 @@ _TABLES = {"settings", "sources", "documents", "sync_runs", "documents_v1"}
 # turn a dict key into SQL.
 _SOURCE_COLUMNS = {"name", "enabled", "drive_folder_id", "local_folder", "token_json", "account_email", "last_sync_at",
                    "last_status", "last_error", "drive_page_token", "last_change_check",
-                   "ms_link", "ms_location", "ms_tenant", "ms_upload", "position", "last_change_found"}
+                   "ms_link", "ms_location", "ms_tenant", "ms_upload", "position", "last_change_found", "workbook_layout"}
 _RUN_COLUMNS = {"finished_at", "total", "processed", "skipped", "errors", "removed", "status", "message", "files"}
 _USER_COLUMNS = {"name", "role", "active", "password_hash"}
 USER_ROLES = ("user", "admin")
@@ -465,6 +466,21 @@ def remove_missing_sheets(source_ref: int, file_source_id: str, present_sheet_id
     if gone:
         _touch()
     return len(gone)
+
+
+def reset_workbook_rows(source_ref: int) -> int:
+    """After the owner changes a source's workbook layout: every workbook row and sheet document of the source goes
+    back to pending so the next sync walks the workbooks again under the new rule (hand-corrected rows stay)."""
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE documents SET status='pending', error=NULL, attempts=0 WHERE source_ref=? AND overridden=0 AND status NOT IN ('removed', 'pending')"
+            " AND (status='split' OR source_id LIKE ?)",
+            (source_ref, "%" + SHEET_SEP + "%"),
+        )
+        n = cur.rowcount
+    if n:
+        _touch()
+    return n
 
 
 def mark_split(doc_id: int, sheets: int, detail: str = "") -> None:

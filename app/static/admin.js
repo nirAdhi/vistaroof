@@ -162,6 +162,9 @@
     (state.overview.sources || []).forEach((src) => { const el = document.querySelector(`#sourceList .source[data-id="${src.id}"] .src-slot`); if (el) el.innerHTML = sourceProgress(src, st); });
   }
 
+  // sources.workbook_layout (app/jobtable.py LAYOUTS): which workbook layout carries the revenue
+  const LAYOUTS = { auto: "Auto-detect (both layouts count)", jobsheets: "Job summary sheets (one sheet per job)", jobtable: "Turnover tables (one row per job)" };
+
   function renderSources(list, s, running = false) {
     // While a sync runs every card control is greyed out: a second Sync would only queue behind it, and Edit / Remove /
     // Disconnect would pull the folder from under the run. Everything comes back when the run finishes (poll → load()).
@@ -187,6 +190,8 @@
             <div class="muted small">${sourceWhere(src)}</div>
             <div class="muted small">${src.doc_count} files known · <a href="/?source=${src.id}&status=done#documents">${src.done_count} read</a>${src.skipped_count ? ` · <a href="/?source=${src.id}&status=skipped#documents">${src.skipped_count} skipped</a>` : ""}${src.error_count ? ` · <a class="neg" href="/?source=${src.id}&status=error#documents">${src.error_count} errors</a>` : ""}${src.waiting_count ? ` · ${src.waiting_count} waiting` : ""} · last sync ${when(src.last_sync_at)}${isCloud(src) && src.connected ? ` · <span title="The watcher asks ${src.kind === "m365" ? "SharePoint / OneDrive" : "Google Drive"} about this folder every watch interval and syncs only this card when something changed">checked for changes ${when(src.last_change_check)} · last change found ${when(src.last_change_found)}</span>` : ""}${src.last_error ? ` · <span class="neg">${esc(src.last_error)}</span>` : ""}</div>
             ${src.connected ? `<div class="small">${src.can_upload ? `<span class="ok">Uploads from the dashboard enabled</span>` : `<span class="missing">Uploads disabled — ${src.kind === "m365" && src.ms_link === "shared" ? "add a source for a specific folder to upload into it" : src.kind === "m365" && !src.ms_upload ? "turn on uploads (Edit) and reconnect" : "reconnect to grant the “create files” permission"}</span>`}</div>` : ""}
+            <div class="small layout-row"><label title="Which workbook layout carries the company's revenue. Auto-detect reads both: one JOB SUMMARY sheet per job (each invoice column a sales invoice) and turnover tables (one row per job, a 'Turnover and WIH <year>' sheet per year plus a Retention sheet). Pick one when both layouts are in the folder so a job is not counted twice. Changing it re-reads the workbooks of this source.">Workbook layout
+              <select data-act="layout" ${busy}>${Object.entries(LAYOUTS).map(([v, l]) => `<option value="${v}" ${(src.workbook_layout || "auto") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
           </div>
           <label class="switch" title="${running ? "Wait for the running sync to finish" : "Include in syncs"}"><input type="checkbox" data-act="toggle" ${src.enabled ? "checked" : ""} ${busy}><span></span></label>
         </div>
@@ -211,6 +216,7 @@
       card.querySelector('[data-act="force"]').addEventListener("click", () => { if (confirm(`Re-read every file in "${src.name}"? This costs API usage for each document.`)) run(api(`/api/admin/sources/${id}/sync?force=1`, { method: "POST" }), "Full re-read started"); });
       card.querySelector('[data-act="remove"]').addEventListener("click", () => { if (confirm(`Remove "${src.name}" and delete its ${src.doc_count} documents from the ledger?`)) run(api(`/api/admin/sources/${id}`, { method: "DELETE" }), "Source removed"); });
       const dis = card.querySelector('[data-act="disconnect"]'); if (dis) dis.addEventListener("click", () => run(api(`/api/admin/sources/${id}/disconnect`, { method: "POST" }), "Disconnected"));
+      card.querySelector('[data-act="layout"]').addEventListener("change", (e) => run(api(`/api/admin/sources/${id}`, { method: "PATCH", body: JSON.stringify({ workbook_layout: e.target.value }) }), "Layout saved — the workbooks are being read again"));
       card.querySelector('[data-act="edit"]').addEventListener("click", () => {
         const name = prompt("Name", src.name); if (name === null) return;
         const patch = { name };
@@ -285,7 +291,7 @@
       <div class="strip-row"><div><b>Document reader</b> — ${who}${s.llm_fallback ? ` · fallback <b>${esc(NAMES[s.llm_fallback] || s.llm_fallback)}</b>${s.llm_fallback_usable ? "" : ' <span class="missing">(no key saved for it)</span>'}` : ""}</div>
         <div><button class="btn sm" id="llmCheckBtn">Check now</button></div></div>
       <div class="small" id="llmStatus" style="margin:6px 0 10px">${statusLine(l)}</div>
-      <div class="small" style="margin:0 0 12px">Figures in the ledger were read by: ${readBy.length ? readBy.map(([m, n]) => `<span class="chip">${esc(m.startsWith("ollama/") ? "Ollama " + m.slice(7) : m.startsWith("gemini/") ? "Gemini " + m.slice(7) : m === "manual" ? "Entered by hand" : m === "jobsheet" ? "Job summary sheets" : m)}: ${n}</span>`).join(" ") : "nothing read yet"}</div>
+      <div class="small" style="margin:0 0 12px">Figures in the ledger were read by: ${readBy.length ? readBy.map(([m, n]) => `<span class="chip">${esc(m.startsWith("ollama/") ? "Ollama " + m.slice(7) : m.startsWith("gemini/") ? "Gemini " + m.slice(7) : m === "manual" ? "Entered by hand" : m === "jobsheet" ? "Job summary sheets" : m === "jobtable" ? "Turnover tables" : m)}: ${n}</span>`).join(" ") : "nothing read yet"}</div>
       <form id="llmForm" class="form">
         <div class="grid two">
           <label>Read documents with
