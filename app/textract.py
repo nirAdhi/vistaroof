@@ -211,7 +211,7 @@ def _cell_text(v) -> str:
         return v.date().isoformat() if (v.hour, v.minute, v.second) == (0, 0, 0) else v.isoformat(sep=" ", timespec="minutes")
     if hasattr(v, "year"):  # date
         return v.isoformat()
-    return str(v).strip()
+    return re.sub(r"\s*\n\s*", " ", str(v).strip())  # a wrapped header ("Total Contract\n/Carry Over") stays one cell
 
 
 MAX_TEXT_CHARS = 300_000  # ~75k tokens: beyond this a file is not one document but a ledger of its own

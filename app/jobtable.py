@@ -13,9 +13,19 @@ document (net amount, dated in that year, the client as the customer, the job as
 the Retention sheet (or any job table without turnover columns) becomes a job record (contract value,
 valued to date, paid, due, retention — the company-health figures). A model never sees these sheets.
 
-A sheet is a job table when, within its first lines, a row has a "Job Nr / Job No" cell, a "Project" or
-"Site" cell and at least one known figure column. Rows whose Job Nr cell is empty (totals, blank lines)
-are skipped. The sheet's year comes from its name ("Turnover and WIH 2026" → 2026, "2020-21" → 2021).
+Vista's real year sheets look like this (the header row is the 4th line, under a title and a line of
+"Budget" / "Total" captions; the month headers are date cells):
+
+    Job  | Description | Margin | Client   | Contract | Variations | Total  | Nov-20 | Dec-20 | Jan-21 … Dec-21 | Value 2020/21 | Gross Profit | Carry Over to Y2
+    C101 | Bakers Yard | 22.50% | Townlink | 9,776    | 33,212     | 42,988 | 451    | 6,559  | …               | 34,945        | 7,863        | 8,043
+
+A sheet is a job table when, within its first lines, a row has a "Job Nr / Job No / Job" cell, a "Project",
+"Description" or "Site" cell and at least one known figure column. Rows whose Job cell is empty (totals,
+blank lines) are skipped. The sheet's year comes from its name ("Turnover and WIH 2026" → 2026, "2020-21"
+→ 2021). Month columns are dated from the sheet's name too, never from the header's own year: a "2020-21"
+sheet whose months start at Nov runs Nov 2020 … Dec 2021, and a "2023" sheet counts as 2023 even when its
+headers still say "Jan-22" (Cormac copies the sheet from the year before). "C101" on a year sheet and "101"
+on the Retention sheet are the same job.
 """
 from __future__ import annotations
 
@@ -37,32 +47,39 @@ _COLUMNS: list[tuple[tuple[str, ...], str]] = [
     (("job nr", "job no", "job number", "job #", "job"), "job_no"),
     (("project", "site", "job name", "description"), "project"),
     (("client", "customer", "contractor"), "client"),
-    (("total contract value", "contract value", "contract sum", "contract"), "contract_value"),
+    (("total contract value", "contract value", "contract sum", "contract", "total contract"), "contract_value"),
+    (("variations", "variation"), "variations"),
     (("valuations to date", "valuation to date", "valued to date", "certified to date", "valuations", "valuation"), "valuations_to_date"),
     (("paid to date", "received to date", "paid", "received"), "paid_to_date"),
     (("current due", "amount due", "due"), "current_due"),
     (("overdue",), "overdue"),
     (("retention due", "retention held", "retention"), "retention_due"),
-    (("turnover", "invoiced", "sales", "income", "revenue", "certified", "value this year", "this year"), "turnover"),
+    (("turnover", "invoiced", "sales", "income", "revenue", "certified", "value this year", "this year", "value"), "turnover"),
     (("wih", "work in hand", "wip", "work in progress", "remaining", "to invoice", "balance to invoice"), "wih"),
+    (("gross profit", "profit"), "gross_profit"),
+    (("carry over", "carried over", "carry forward", "carried forward"), "carry_over"),
     (("notes", "note", "comments", "comment", "remarks"), "note"),
 ]
 _MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-FIGURE_KEYS = ("contract_value", "valuations_to_date", "paid_to_date", "current_due", "overdue", "retention_due", "turnover", "wih")
-LABELS = {"contract_value": "Contract value", "valuations_to_date": "Valued to date", "paid_to_date": "Paid to date",
-          "current_due": "Current due", "overdue": "Overdue", "retention_due": "Retention due", "turnover": "Turnover", "wih": "Work in hand"}
+_MONTH_HEAD = re.compile(r"^(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?"
+                         r"|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?(?:['\s\-/]*(?:20)?\d{2})?$")
+FIGURE_KEYS = ("contract_value", "variations", "valuations_to_date", "paid_to_date", "current_due", "overdue", "retention_due",
+               "turnover", "wih", "gross_profit", "carry_over")
+LABELS = {"contract_value": "Contract value", "variations": "Variations", "valuations_to_date": "Valued to date",
+          "paid_to_date": "Paid to date", "current_due": "Current due", "overdue": "Overdue", "retention_due": "Retention due",
+          "turnover": "Turnover", "wih": "Work in hand", "gross_profit": "Gross profit", "carry_over": "Carry over"}
 
 
 def _column_key(header: str) -> str | None:
     h = re.sub(r"\s+", " ", (header or "").strip().lower().replace("€", "")).strip(" :")
     if not h:
         return None
-    m = re.match(r"^([a-z]{3})[a-z]*\.?(?:\s*(?:20)?\d{2})?$", h)  # "Jan", "January", "Jan 2026", "Jan-26"
-    if m and m.group(1) in _MONTHS:
-        return f"month:{_MONTHS.index(m.group(1)) + 1:02d}"
-    m = re.match(r"^([a-z]{3})[a-z]*\.?[\s\-/]+(?:20)?\d{2}$", h)
-    if m and m.group(1) in _MONTHS:
-        return f"month:{_MONTHS.index(m.group(1)) + 1:02d}"
+    m = re.match(r"^(20\d{2})-(\d{2})-\d{2}$", h)  # a date cell ("Nov-20" typed in Excel is 1 Nov 2020)
+    if m and 1 <= int(m.group(2)) <= 12:
+        return f"month:{int(m.group(2)):02d}"
+    m = _MONTH_HEAD.match(h)  # "Jan", "January", "Sept", "Jan 2026", "Jan-26", "Jan '26" — but not "Margin"
+    if m:
+        return f"month:{_MONTHS.index(m.group(1)[:3]) + 1:02d}"
     for names, key in _COLUMNS:  # an exact name first ("job" is job_no, "job name" is the project)
         if h in names:
             return key
@@ -82,14 +99,39 @@ def sheet_year(name: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def _header(rows: list[list[str]]) -> tuple[int, dict[str, int]] | None:
+def sheet_start_year(name: str) -> int | None:
+    """"Turnover and WIH 2020-21" → 2020: the year its first month column is in."""
+    m = re.search(r"(20\d{2})", name or "")
+    return int(m.group(1)) if m else None
+
+
+def _month_columns(months: list[tuple[int, int]], start_year: int | None) -> dict[str, int]:
+    """{"month:2020-11": column} for the month columns in sheet order. The year starts at the sheet's first year
+    and moves on each time the month number drops (Nov-20, Dec-20, Jan-21 …); the header's own year is ignored
+    because a copied sheet keeps last year's headers. Without a year the key is "month:11"."""
+    out: dict[str, int] = {}
+    year, prev = start_year, 0
+    for c, mm in months:
+        if mm < prev and year:
+            year += 1
+        prev = mm
+        key = f"month:{year}-{mm:02d}" if year else f"month:{mm:02d}"
+        out.setdefault(key, c)
+    return out
+
+
+def _header(rows: list[list[str]], start_year: int | None = None) -> tuple[int, dict[str, int]] | None:
     """(header row index, {column key: column index}) when the sheet is a job table."""
     for i, cells in enumerate(rows[:HEADER_LINES]):
         cols: dict[str, int] = {}
+        months: list[tuple[int, int]] = []
         for c, v in enumerate(cells):
             key = _column_key(v)
-            if key and key not in cols:
+            if key and key.startswith("month:"):
+                months.append((c, int(key[6:])))
+            elif key and key not in cols:
                 cols[key] = c
+        cols.update(_month_columns(months, start_year))
         figures = any(k in cols for k in FIGURE_KEYS) or any(k.startswith("month:") for k in cols)
         if "job_no" in cols and ("project" in cols or "client" in cols) and figures:
             return i, cols
@@ -106,7 +148,7 @@ _JOB_NO = re.compile(r"^[A-Za-z]?\d[\w.\-/ ]*$")
 def parse(name: str, text: str) -> dict[str, Any] | None:
     """The table's rows, or None when the sheet is not a job table."""
     rows = [[c.strip() for c in ln.split(SEP)] for ln in text.split("\n")]
-    head = _header(rows)
+    head = _header(rows, sheet_start_year(name))
     if head is None:
         return None
     hi, cols = head
@@ -133,9 +175,21 @@ def parse(name: str, text: str) -> dict[str, Any] | None:
             "has_turnover": "turnover" in cols or bool(months)}
 
 
+def job_key(job_no: str | None) -> str | None:
+    """The job number without a letter prefix: "C101" and "101" are the same job (Retention vs year sheets)."""
+    return re.sub(r"^[A-Za-z]{1,2}(?=\d)", "", job_no.strip()) if job_no else job_no
+
+
 def job_name(job: dict[str, Any]) -> str:
-    site, no = job.get("project"), job.get("job_no")
+    site, no = job.get("project"), job_key(job.get("job_no"))
     return f"{site} (job {no})" if site and no else site or f"job {no}"
+
+
+def month_label(key: str, year: int | None = None) -> str:
+    """"2020-11" → "Nov 2020"; "11" → "Nov <year>"."""
+    y, _, mm = key.rpartition("-")
+    y = y or (str(year) if year else "")
+    return f"{_MONTHS[int(mm) - 1].title()} {y}".strip()
 
 
 def _eur(v: float | None) -> str:
@@ -189,10 +243,11 @@ def turnover_rows(parsed: dict[str, Any], job: dict[str, Any]) -> list[dict[str,
     year = parsed.get("year")
     out = []
     if job.get("months"):
-        for mm, amount in job["months"].items():
+        for key, amount in job["months"].items():
             if amount:
-                out.append({"key": f"month:{mm}", "label": f"{_MONTHS[int(mm) - 1].title()} {year or ''}".strip(), "net": amount,
-                            "date": f"{year}-{mm}-01" if year else None})
+                y, _, mm = key.rpartition("-")
+                y = y or (str(year) if year else "")
+                out.append({"key": f"month:{key}", "label": month_label(key, year), "net": amount, "date": f"{y}-{mm}-01" if y else None})
         return out
     if job.get("turnover"):
         out.append({"key": "turnover", "label": f"Turnover {year}" if year else "Turnover", "net": job["turnover"],

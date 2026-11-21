@@ -164,3 +164,58 @@ def test_the_workbook_layout_option_says_which_layout_counts(admin, fresh_db, fa
 
     admin.patch(f"/api/admin/sources/{src['id']}", json={"workbook_layout": "auto"}); wait_sync()
     assert admin.get("/api/summary?from=2026-01-01&to=2026-12-31").json()["totals"]["revenue"] == both
+
+
+def _real_year_sheet(ws, title: str, months: list[datetime], rows: list[list]) -> None:
+    """Cormac's real year-sheet layout (2026-11-21): a title, a line of "Budget" / "Total" captions, the header
+    on the 4th line with date cells for the months, "C"-prefixed job numbers and totals lines at the bottom."""
+    ws.append([None, None, None, None, title]); ws.append([]); ws.append([None, None, "Budget", None, "Total"])
+    ws.append(["Job", "Description", "Margin", "Client", "Total Contract\n/Carry Over", "Variations", "Total", *months, "Value 2020/21", "Gross Profit", "Carry Over to Y2"])
+    for r in rows:
+        ws.append(r)
+    ws.append([]); ws.append([None, "Secured Work In Hand - Nov to Dec 2020/21", None, None, None, None, None, 21789, 44031])
+    ws.append([None, "Actual / Projected turnover by month", None, None, None, None, None, 21789, 44031])
+
+
+def test_the_real_year_sheets_date_every_month_from_the_sheet_name(admin, fresh_db, fake_claude, tmp_path):
+    folder = tmp_path / "Turnover"; folder.mkdir()
+    wb = openpyxl.Workbook(); wb.remove(wb.active)
+    m2021 = [datetime(2020, 11, 1), datetime(2020, 12, 1)] + [datetime(2021, m, 1) for m in range(1, 13)]  # 14 months
+    _real_year_sheet(wb.create_sheet("Turnover and WIH 2020-21"), "Work In Hand 2020/21", m2021, [
+        ["C101", "Bakers Yard", 0.225, "Townlink", 9776, 33212, 42988, 451, 6559, None, None, None, 4796, 1275, None, 2760, 15010, 1575, None, 2519, None, 34945, 7863, 8043],
+        ["C102.A", "Foxrock - Materials", None, "Derreen Construction", 6411, None, 6411, *([None] * 9), 6411, *([None] * 4), 6411, None, 0],
+    ])
+    # the 2023 sheet was copied from 2022: its month headers still say 2022 — the sheet's name wins
+    _real_year_sheet(wb.create_sheet("Turnover and WIH 2023"), "Turnover & Work In Hand 2023", [datetime(2022, m, 1) for m in range(1, 13)], [
+        ["C176", "Woodbrook Shankill", 0.28, "Castlethorn", 85186.2, None, 85186, None, 41036, 45320, *([None] * 9), 86356, 24180],
+        ["C201", "Ashford", 0.15, "Glenveagh", 1880, None, 1880, *([None] * 11), 1880, 1880, 282],
+    ])
+    ws = wb.create_sheet("Retention"); ws.append(RETENTION_HEAD); ws.append(RETENTION[0])
+    wb.save(folder / "Vista Turnover and Work in Hand 2025.xlsx")
+    src = admin.post("/api/admin/sources", json={"kind": "local", "name": "VistaTurnover", "local_folder": str(folder)}).json()
+    admin.post(f"/api/admin/sources/{src['id']}/sync"); wait_sync()
+    assert fake_claude.calls == []
+    docs = {d["name"]: d for d in admin.get("/api/documents?limit=200&from=2000-01-01").json()}
+    book = docs["Vista Turnover and Work in Hand 2025.xlsx"]
+    assert "3 turnover tables with 5 job rows and 12 turnover figures" in book["error"], book["error"]
+    b = "Vista Turnover and Work in Hand 2025.xlsx › Turnover and WIH 2020-21 › C101 Bakers Yard"
+    assert docs[b + " › Nov 2020"]["issue_date"] == "2020-11-01" and docs[b + " › Nov 2020"]["net_amount"] == 451
+    assert docs[b + " › Nov 2021"]["issue_date"] == "2021-11-01" and docs[b + " › Nov 2021"]["net_amount"] == 2519  # both Novembers kept
+    assert docs[b + " › Apr 2021"]["counterparty"] == "Townlink" and docs[b + " › Apr 2021"]["project"] == "Bakers Yard (job 101)"
+    assert b not in docs  # a row with turnover figures is its figures; the row's other columns ride along in each one
+    raw = admin.get(f"/api/documents/{docs[b + ' › Nov 2020']['id']}").json()["raw"]
+    assert (raw["contract_value"], raw["variations"], raw["turnover"], raw["gross_profit"], raw["carry_over"]) == (9776, 33212, 34945, 7863, 8043)
+    assert raw["other"] == {"Margin": 0.23, "Total": 42988} and raw["column"] == "month:2020-11" and raw["job_no"] == "C101"
+    assert "Secured Work In Hand" not in " ".join(docs) and "Actual / Projected" not in " ".join(docs)  # totals lines are not jobs
+    w = "Vista Turnover and Work in Hand 2025.xlsx › Turnover and WIH 2023 › C176 Woodbrook Shankill"
+    assert docs[w + " › Feb 2023"]["issue_date"] == "2023-02-01" and docs[w + " › Mar 2023"]["net_amount"] == 45320 and w + " › Feb 2022" not in docs
+    assert docs["Vista Turnover and Work in Hand 2025.xlsx › Turnover and WIH 2023 › C201 Ashford › Dec 2023"]["issue_date"] == "2023-12-01"
+    assert admin.get("/api/summary?from=2020-01-01&to=2020-12-31").json()["totals"]["revenue"] == 7010
+    assert admin.get("/api/summary?from=2021-01-01&to=2021-12-31").json()["totals"]["revenue"] == 34346
+    assert admin.get("/api/summary?from=2023-01-01&to=2023-12-31").json()["totals"]["revenue"] == 88236
+    jobs = {p["name"]: p for p in admin.get("/api/summary?from=2000-01-01&to=2030-12-31").json()["projects"]}
+    assert jobs["Bakers Yard (job 101)"]["revenue"] == 34945  # the Retention row (101) and the year rows (C101) are one job
+    assert docs["Vista Turnover and Work in Hand 2025.xlsx › Retention › 101 Bakers Yard"]["project"] == "Bakers Yard (job 101)"
+    r = admin.get(f"/api/documents/{docs[b + ' › Nov 2021']['id']}/preview")
+    assert r.status_code == 200 and "<th class=n>Nov 2020</th>" in r.text and "<th class=n>Nov 2021</th>" in r.text and "<tr class=focus><td>C101</td>" in r.text
+    assert "<th class=n>Carry over</th>" in r.text

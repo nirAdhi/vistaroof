@@ -111,18 +111,25 @@ next ordinary sync (no Full re-read needed); columns headed Total / Total Paid /
 Retention Due are totals, not invoices, and an empty or 0.00 column is nothing invoiced.
 
 **Turnover tables (one row per job) are read without a model too.** Vista's newer workbook layout
-has a "Turnover and WIH <year>" sheet per year and a "Retention" sheet, each a table with a header row
-(Job Nr, Project, Client, Total Contract Value, Valuations to Date, Paid to Date, Current Due, Overdue,
-Retention Due, or Turnover / WIH / month columns). `app/jobtable.py` recognises such a sheet by its
-header (columns by name, any order; unknown figure columns are kept in the document's raw data) and
-turns every job row into documents: on a year sheet each turnover figure is a **sales invoice**
-("Book.xlsx › Turnover and WIH 2026 › 101 Bakers Yard › Turnover 2026", the Client as the customer,
-"Project (job N)" as the project, dated 1 January of the sheet's year, or the 1st of the month for a
-month column; "2020-21" counts as 2021), on any other sheet the row is the job's record ("Book.xlsx ›
-Retention › 101 Bakers Yard": contract value, valued to date, paid, due, retention and the free-text
-note in its summary). Reader shown as `jobtable`. Turnover figures are not invoices, so they never
-count as money owed. The workbook row's note reads "8 separate sheets: 7 turnover tables with 1,890
-job rows and 1,620 turnover figures".
+has a "Turnover and WIH <year>" sheet per year and a "Retention" sheet, each a table with a header row.
+A year sheet reads Job | Description | Margin | Client | Total Contract | Variations | Total | one column
+per month (Nov-20 … Dec-21) | Value | Gross Profit | Carry Over; the Retention sheet reads Job Nr |
+Project | Client | Total Contract Value | Valuations to Date | Paid to Date | Current Due | Overdue |
+Retention Due | note. `app/jobtable.py` recognises such a sheet by its header (columns by name, any
+order, within the first 8 lines; unknown figure columns such as Margin or Total are kept in the
+document's raw data) and turns every job row into documents: on a year sheet each month figure is a
+**sales invoice** ("Book.xlsx › Turnover and WIH 2020-21 › C101 Bakers Yard › Nov 2020", the Client as
+the customer, "Description (job 101)" as the project, dated the 1st of the month; a Turnover / Value
+column without month columns is dated 1 January of the sheet's year), on any other sheet the row is the
+job's record ("Book.xlsx › Retention › 101 Bakers Yard": contract value, valued to date, paid, due,
+retention and the free-text note in its summary). Months are dated from the **sheet's name**, never from
+the header's own year: a "2020-21" sheet whose months start at Nov runs Nov 2020 … Dec 2021, and a
+"2023" sheet counts as 2023 even when its headers still say "Jan-22" (a sheet copied from the year
+before keeps the old headers). "C101" on a year sheet and "101" on the Retention sheet are one job.
+Totals lines ("Secured Work In Hand", "Actual / Projected turnover by month") have no job number and
+are skipped. Reader shown as `jobtable`. Turnover figures are not invoices, so they never count as
+money owed. The workbook row's note reads "8 separate sheets: 7 turnover tables with 240 job rows and
+1,620 turnover figures".
 
 **Workbook layout (Admin → source card).** Auto-detect reads both layouts. When a folder holds both
 the old per-job workbook and the new tables, the same job would be counted twice, so the card's

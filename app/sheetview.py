@@ -99,7 +99,7 @@ def _table_block(parsed: dict[str, Any], focus_row: str | None) -> str:
     out = [f"<h1>{_e(parsed['sheet'])}</h1>", f'<div class="sub">{len(parsed["jobs"])} jobs' + (f" · {year}" if year else "") + "</div>"]
     out.append("<table><thead><tr><th>Job</th><th>Project</th><th>Client</th>"
                + "".join(f'<th class=n>{_e(jobtable.LABELS[k])}</th>' for k in keys)
-               + "".join(f'<th class=n>{_e(jobtable._MONTHS[int(m[6:]) - 1].title())}</th>' for m in months) + "<th>Note</th></tr></thead><tbody>")
+               + "".join(f'<th class=n>{_e(jobtable.month_label(m[6:]))}</th>' for m in months) + "<th>Note</th></tr></thead><tbody>")
     for j in parsed["jobs"]:
         out.append(f'<tr{" class=focus" if focus_row is not None and j["job_no"] == focus_row else ""}><td>{_e(j["job_no"])}</td><td>{_e(j.get("project") or "")}</td>'
                    f'<td>{_e(j.get("client") or "")}</td>' + "".join(f"<td class=n>{_money(j.get(k))}</td>" for k in keys)
